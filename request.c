@@ -31,9 +31,14 @@ int on_message_complete(http_parser* parser) {
 int on_url(http_parser* parser, const char* at, size_t length) {
   http_request* request = (http_request*) parser->data;
   if (http_parser_parse_url(at, length, 0, &request->url_handle) != 0) {
-    abort();
+    fprintf(stderr, "Parse error %s\n", http_errno_description(parser->http_errno));
+    return 1;
   }
   request->url = malloc(length + 1);
+  if (request->url == NULL) {
+    fprintf(stderr, "Allocate error\n");
+    return 1;
+  }
   memcpy(request->url, at, length);
   *(request->url + length) = 0;
   return 0;
@@ -42,6 +47,10 @@ int on_url(http_parser* parser, const char* at, size_t length) {
 int on_header_field(http_parser* parser, const char* at, size_t length) {
   http_request* request = (http_request*) parser->data;
   request->last_field = malloc(length + 1);
+  if (request->last_field == NULL) {
+    fprintf(stderr, "Allocate error\n");
+    return 1;
+  }
   memset(request->last_field, 0, length + 1);
   memcpy(request->last_field, at, length);
   return 0;
@@ -50,10 +59,18 @@ int on_header_field(http_parser* parser, const char* at, size_t length) {
 int on_header_value(http_parser* parser, const char* at, size_t length) {
   http_request* request = (http_request*) parser->data;
   char* value = malloc(length + 1);
+  if (value == NULL) {
+    fprintf(stderr, "Allocate error\n");
+    return 1;
+  }
   memset(value, 0, length + 1);
   memcpy(value, at, length);
   header_elem elem;
   elem.key = strdup(request->last_field);
+  if (elem.key == NULL) {
+    fprintf(stderr, "Allocate error\n");
+    return 1;
+  }
   elem.value = value;
   *kl_pushp(header, request->headers) = elem;
   free(request->last_field);

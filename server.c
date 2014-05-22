@@ -86,11 +86,11 @@ on_read(uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf) {
       free(buf->base);
     }
     uv_shutdown_t* shutdown_req = (uv_shutdown_t*) malloc(sizeof(uv_shutdown_t));
-	if (shutdown_req == NULL) {
+    if (shutdown_req == NULL) {
       uv_close((uv_handle_t*) stream, on_close);
       fprintf(stderr, "Allocate error\n");
       return;
-	}
+    }
     uv_shutdown(shutdown_req, stream, on_shutdown);
     return;
   }
@@ -119,16 +119,16 @@ static void
 response_error(uv_handle_t* handle, int status_code, const char* status, const char* message) {
   char bufline[1024];
   sprintf(bufline,
-	  "HTTP/1.0 %d %s\r\n"
-	  "Content-Length: 10\r\n"
-	  "Content-Type: text/plain; charset=UTF-8;\r\n"
-	  "\r\n"
-	  "%s", status_code, status, message ? message : status);
+      "HTTP/1.0 %d %s\r\n"
+      "Content-Length: 10\r\n"
+      "Content-Type: text/plain; charset=UTF-8;\r\n"
+      "\r\n"
+      "%s", status_code, status, message ? message : status);
   uv_write_t* write_req = malloc(sizeof(uv_write_t));
   uv_buf_t buf = uv_buf_init(bufline, strlen(bufline));
   int r = uv_write(write_req, (uv_stream_t*) handle, &buf, 1, NULL);
   if (r) {
-	free(write_req);
+    free(write_req);
     fprintf(stderr, "Write error %s\n", uv_err_name(r));
   }
 }
@@ -141,28 +141,28 @@ on_fs_read(uv_fs_t *req) {
   uv_fs_req_cleanup(req);
   if (result < 0) {
     fprintf(stderr, "File read error %s\n", uv_err_name(result));
-	response_error(response->handle, 500, "Internal Server Error", NULL);
+    response_error(response->handle, 500, "Internal Server Error", NULL);
     destroy_response(response);
-	return;
+    return;
   } else if (result == 0) {
     destroy_response(response);
-	free(req);
-	return;
+    free(req);
+    return;
   } else {
     uv_write_t *write_req = (uv_write_t *) malloc(sizeof(uv_write_t));
-	write_req->data = response;
-	uv_buf_t buf = uv_buf_init(response->pbuf, result);
+    write_req->data = response;
+    uv_buf_t buf = uv_buf_init(response->pbuf, result);
     uv_write(write_req, (uv_stream_t*) response->handle, &buf, 1, on_write);
   }
 
   response->request->offset += result;
   if (response->request->offset >= response->request->size) {
     free(req);
-	return;
+    return;
   }
   int r = uv_fs_read(loop, response->read_req, response->open_req->result, &response->buf, 1, response->request->offset, on_fs_read);
   if (r) {
-	response_error(response->handle, 500, "Internal Server Error", NULL);
+    response_error(response->handle, 500, "Internal Server Error", NULL);
     destroy_request(response->request, TRUE);
   }
 }
@@ -175,7 +175,7 @@ on_fs_open_cb(uv_fs_t* req) {
   uv_fs_req_cleanup(req);
   if (result < 0) {
     fprintf(stderr, "Open error %s\n", uv_err_name(result));
-	response_error(request->handle, 404, "Not Found", NULL);
+    response_error(request->handle, 404, "Not Found", NULL);
     destroy_request(request, TRUE);
     return;
   }
@@ -194,7 +194,7 @@ on_fs_open_cb(uv_fs_t* req) {
   response->read_req = read_req;
   int r = uv_fs_read(loop, read_req, result, &response->buf, 1, offset, on_fs_read);
   if (r) {
-	response_error(request->handle, 500, "Internal Server Error", NULL);
+    response_error(request->handle, 500, "Internal Server Error", NULL);
     destroy_request(request, TRUE);
   }
 }
@@ -207,7 +207,7 @@ on_fs_stat_cb(uv_fs_t* req) {
   uv_fs_req_cleanup(req);
   if (result < 0) {
     fprintf(stderr, "Stat error %s\n", uv_err_name(result));
-	response_error(request->handle, 404, "Not Found", NULL);
+    response_error(request->handle, 404, "Not Found", NULL);
     destroy_request(request, TRUE);
     return;
   }
@@ -215,10 +215,10 @@ on_fs_stat_cb(uv_fs_t* req) {
 
   char bufline[1024];
   sprintf(bufline,
-	  "HTTP/1.1 200 OK\r\n"
-	  "Content-Length: %ld\r\n"
-	  "Content-Type: text/html; charset=UTF-8;\r\n"
-	  "\r\n", request->size);
+      "HTTP/1.1 200 OK\r\n"
+      "Content-Length: %ld\r\n"
+      "Content-Type: text/html; charset=UTF-8;\r\n"
+      "\r\n", request->size);
   uv_write_t* write_req = malloc(sizeof(uv_write_t));
   uv_buf_t buf = uv_buf_init(bufline, strlen(bufline));
   int r = uv_write(write_req, (uv_stream_t*) request->handle, &buf, 1, NULL);
@@ -226,7 +226,7 @@ on_fs_stat_cb(uv_fs_t* req) {
   if (r) {
     free(write_req);
     fprintf(stderr, "Write error %s\n", uv_err_name(r));
-	return;
+    return;
   }
 
   uv_fs_t* open_req = malloc(sizeof(uv_fs_t));
@@ -234,9 +234,9 @@ on_fs_stat_cb(uv_fs_t* req) {
   r = uv_fs_open(loop, open_req, request->path, O_RDONLY | O_BINARY, S_IREAD, on_fs_open_cb);
   if (r) {
     fprintf(stderr, "Open error %s\n", uv_err_name(r));
-	response_error(request->handle, 404, "Not Found", NULL);
-	destroy_request(request, TRUE);
-	free(open_req);
+    response_error(request->handle, 404, "Not Found", NULL);
+    destroy_request(request, TRUE);
+    free(open_req);
   }
 }
 
@@ -244,22 +244,22 @@ static void
 on_request_complete(http_request* request) {
   kliter_t(header)* it;
   for (it = kl_begin(request->headers); it != kl_end(request->headers); it = kl_next(it)) {
-	header_elem elem = kl_val(it);
-	if (!strcasecmp(elem.key, "connection")) {
-	  if (!strcasecmp(elem.value, "keep-alive")) {
+    header_elem elem = kl_val(it);
+    if (!strcasecmp(elem.key, "connection")) {
+      if (!strcasecmp(elem.value, "keep-alive")) {
         request->keep_alive = 1;
-	  }
-	}
+      }
+    }
   }
 
   if (request->url_handle.field_set & (1<<UF_PATH)) {
     char path[MAX_PATH];
-	char* ptr = request->url + request->url_handle.field_data[UF_PATH].off;
-	int len = request->url_handle.field_data[UF_PATH].len;
-	snprintf(path, sizeof(path), "./public%.*s", len, ptr);
-	if (*(ptr + len - 1) == '/') {
-	  strcat(path, "index.html");
-	}
+    char* ptr = request->url + request->url_handle.field_data[UF_PATH].off;
+    int len = request->url_handle.field_data[UF_PATH].len;
+    snprintf(path, sizeof(path), "./public%.*s", len, ptr);
+    if (*(ptr + len - 1) == '/') {
+      strcat(path, "index.html");
+    }
     request->path = strdup(path);
   }
 
@@ -268,10 +268,10 @@ on_request_complete(http_request* request) {
   int r = uv_fs_stat(loop, stat_req, request->path, on_fs_stat_cb);
   if (r) {
     fprintf(stderr, "Stat error %s\n", uv_err_name(r));
-	uv_close((uv_handle_t*) request->handle, NULL);
-	response_error(request->handle, 404, "Not Found", NULL);
-	destroy_request(request, TRUE);
-	free(stat_req);
+    uv_close((uv_handle_t*) request->handle, NULL);
+    response_error(request->handle, 404, "Not Found", NULL);
+    destroy_request(request, TRUE);
+    free(stat_req);
   }
 }
 
@@ -282,40 +282,40 @@ on_connection(uv_stream_t* server, int status) {
 
   if (status != 0) {
     fprintf(stderr, "Connect error %s\n", uv_err_name(status));
-	return;
+    return;
   }
 
   stream = malloc(sizeof(uv_tcp_t));
   if (stream == NULL) {
     fprintf(stderr, "Allocate error\n");
-	return;
+    return;
   }
 
   r = uv_tcp_init(loop, (uv_tcp_t*) stream);
   if (r) {
     fprintf(stderr, "Socket creation error %s\n", uv_err_name(r));
-	return;
+    return;
   }
 
   r = uv_accept(server, stream);
   if (r) {
     fprintf(stderr, "Accept error %s\n", uv_err_name(r));
-	return;
+    return;
   }
 
   http_parser* parser = malloc(sizeof(http_parser));
   if (parser == NULL) {
     fprintf(stderr, "Allocate error\n");
-	uv_close((uv_handle_t*) stream, NULL);
-	return;
+    uv_close((uv_handle_t*) stream, NULL);
+    return;
   }
   http_parser_init(parser, HTTP_REQUEST);
 
   http_request* request = malloc(sizeof(http_request));
   if (request == NULL) {
     fprintf(stderr, "Allocate error\n");
-	uv_close((uv_handle_t*) stream, NULL);
-	return;
+    uv_close((uv_handle_t*) stream, NULL);
+    return;
   }
   parser->data = request;
 
@@ -327,27 +327,40 @@ on_connection(uv_stream_t* server, int status) {
   r = uv_read_start(stream, on_alloc_cb, on_read);
   if (r) {
     fprintf(stderr, "Read error %s\n", uv_err_name(r));
-	uv_close((uv_handle_t*) stream, NULL);
+    uv_close((uv_handle_t*) stream, NULL);
   }
 }
 
 static void
 usage(const char* app) {
   fprintf(stderr, "usage: %s [OPTIONS]\n", app);
+  fprintf(stderr, "    -a ADDR: specify address\n");
   fprintf(stderr, "    -p PORT: specify port number\n");
   exit(1);
 }
 
 int
 main(int argc, char* argv[]) {
+  char* ipaddr = "0.0.0.0";
   int port = 7000;
   int i;
   for (i = 1; i < argc; i++) {
-	if (!strcmp(argv[i], "-p") && i < argc-1) {
-      char* e = NULL;
-      port = strtol(argv[++i], &e, 10);
-	  if (e && *e) usage(argv[0]);
-	}
+    if (!strcmp(argv[i], "-a")) {
+      if (i < argc-1) {
+        ipaddr = argv[++i];
+      } else {
+        usage(argv[0]);
+      }
+    }
+    if (!strcmp(argv[i], "-p")) {
+      if (i < argc-1) {
+        char* e = NULL;
+        port = strtol(argv[++i], &e, 10);
+        if (e && *e) usage(argv[0]);
+      } else {
+        usage(argv[0]);
+      }
+    }
   }
 
   loop = uv_default_loop();
@@ -364,7 +377,7 @@ main(int argc, char* argv[]) {
   parser_settings.on_body = on_body;
   parser_settings.on_message_complete = on_message_complete;
 
-  r = uv_ip4_addr("0.0.0.0", 7000, &addr);
+  r = uv_ip4_addr(ipaddr, 7000, &addr);
   if (r) {
     fprintf(stderr, "Address error %s\n", uv_err_name(r));
     return 1;
@@ -391,3 +404,5 @@ main(int argc, char* argv[]) {
 
   return uv_run(loop, UV_RUN_DEFAULT);
 }
+
+/* vim:set et: */
