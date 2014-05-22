@@ -8,6 +8,7 @@ int on_message_begin(http_parser* parser) {
   request->size = 0;
   request->offset = 0;
   request->url = NULL;
+  request->payload = NULL;
   request->last_field = NULL;
   request->headers = kl_init(header);
   return 0;
@@ -16,8 +17,8 @@ int on_message_begin(http_parser* parser) {
 int on_headers_complete(http_parser* parser) {
   http_request* request = (http_request*) parser->data;
   if (request->last_field != NULL) {
-	free(request->last_field);
-	request->last_field;
+    free(request->last_field);
+    request->last_field;
   }
   return 0;
 }
@@ -69,6 +70,7 @@ int on_header_value(http_parser* parser, const char* at, size_t length) {
   elem.key = strdup(request->last_field);
   if (elem.key == NULL) {
     fprintf(stderr, "Allocate error\n");
+    free(value);
     return 1;
   }
   elem.value = value;
@@ -79,7 +81,14 @@ int on_header_value(http_parser* parser, const char* at, size_t length) {
 }
 
 int on_body(http_parser* parser, const char* at, size_t length) {
-  (void)parser;
-  printf("Body: %.*s\n", (int)length, at);
+  http_request* request = (http_request*) parser->data;
+  char* payload = malloc(length + 1);
+  if (payload == NULL) {
+    fprintf(stderr, "Allocate error\n");
+    return 1;
+  }
+  memset(payload, 0, length + 1);
+  memcpy(payload, at, length);
+  request->payload = payload;
   return 0;
 }

@@ -48,19 +48,23 @@ int on_body(http_parser* _, const char* at, size_t length);
 static void
 destroy_request(http_request* request, int close_handle) {
   kl_destroy(header, request->headers);
-  free(request->url);
-  free(request->path);
-  if (close_handle)
+  if (request->payload) free(request->payload);
+  if (request->url) free(request->url);
+  if (request->path) free(request->path);
+  if (close_handle && request->handle) {
     uv_close((uv_handle_t*) request->handle, NULL);
+  }
   free(request);
 }
 
 static void
 destroy_response(http_response* response) {
-  free(response->pbuf);
-  destroy_request(response->request, TRUE);
-  uv_fs_t close_req;
-  uv_fs_close(loop, &close_req, response->open_req->result, NULL);
+  if (response->pbuf) free(response->pbuf);
+  if (response->request) destroy_request(response->request, TRUE);
+  if (response->open_req) {
+    uv_fs_t close_req;
+    uv_fs_close(loop, &close_req, response->open_req->result, NULL);
+  }
   free(response);
 }
 
