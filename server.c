@@ -495,13 +495,11 @@ main(int argc, char* argv[]) {
   parser_settings.on_message_complete = on_message_complete;
 
   mime_type = kh_init(mime_type);
-  /*
   add_mime_type(".jpg", "image/jpeg");
   add_mime_type(".png", "image/png");
   add_mime_type(".gif", "image/gif");
   add_mime_type(".html", "text/html");
   add_mime_type(".txt", "text/plain");
-  */
 
   r = uv_ip4_addr(ipaddr, 7000, &addr);
   if (r) {
