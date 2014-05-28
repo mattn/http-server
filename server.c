@@ -34,6 +34,7 @@
 
 static uv_loop_t* loop;
 static http_parser_settings parser_settings;
+static char* static_dir = "./public";
 
 KHASH_MAP_INIT_STR(mime_type, const char*)
 static khash_t(mime_type)* mime_type;
@@ -258,7 +259,7 @@ on_fs_open(uv_fs_t* req) {
   uv_fs_req_cleanup(req);
   if (result < 0) {
     fprintf(stderr, "Open error %s\n", uv_err_name(result));
-    response_error(request->handle, 404, "Not Found", NULL);
+    response_error(request->handle, 404, "Not Found\n", NULL);
     destroy_request(request, 1);
     return;
   }
@@ -266,7 +267,7 @@ on_fs_open(uv_fs_t* req) {
   http_response* response = malloc(sizeof(http_response));
   if (response == NULL) {
     fprintf(stderr, "Allocate error\n");
-    response_error(request->handle, 404, "Not Found", NULL);
+    response_error(request->handle, 404, "Not Found\n", NULL);
     destroy_request(request, 1);
     return;
   }
@@ -277,7 +278,7 @@ on_fs_open(uv_fs_t* req) {
   response->pbuf = malloc(8192);
   if (response->pbuf == NULL) {
     fprintf(stderr, "Allocate error\n");
-    response_error(request->handle, 404, "Not Found", NULL);
+    response_error(request->handle, 404, "Not Found\n", NULL);
     destroy_response(response, 1);
     return;
   }
@@ -287,7 +288,7 @@ on_fs_open(uv_fs_t* req) {
   uv_fs_t* read_req = malloc(sizeof(uv_fs_t));
   if (read_req == NULL) {
     fprintf(stderr, "Allocate error\n");
-    response_error(request->handle, 404, "Not Found", NULL);
+    response_error(request->handle, 404, "Not Found\n", NULL);
     destroy_response(response, 1);
     return;
   }
@@ -295,7 +296,7 @@ on_fs_open(uv_fs_t* req) {
   response->read_req = read_req;
   int r = uv_fs_read(loop, read_req, result, &response->buf, 1, offset, on_fs_read);
   if (r) {
-    response_error(request->handle, 500, "Internal Server Error", NULL);
+    response_error(request->handle, 500, "Internal Server Error\n", NULL);
     destroy_response(response, 1);
   }
 }
@@ -314,7 +315,7 @@ on_header_write(uv_write_t* req, int status) {
   int r = uv_fs_open(loop, open_req, request->path, O_RDONLY, S_IREAD, on_fs_open);
   if (r) {
     fprintf(stderr, "Open error %s\n", uv_err_name(r));
-    response_error(request->handle, 404, "Not Found", NULL);
+    response_error(request->handle, 404, "Not Found\n", NULL);
     destroy_request(request, 1);
     free(open_req);
   }
@@ -327,7 +328,7 @@ on_fs_stat(uv_fs_t* req) {
 
   if (result < 0) {
     fprintf(stderr, "Stat error %s\n", uv_err_name(result));
-    response_error(request->handle, 404, "Not Found", NULL);
+    response_error(request->handle, 404, "Not Found\n", NULL);
     destroy_request(request, 1);
     return;
   }
@@ -375,13 +376,14 @@ on_fs_stat(uv_fs_t* req) {
 
 static void
 on_request_complete(http_parser* parser, http_request* request) {
+  char path[PATH_MAX];
   if (!(request->url_handle.field_set & (1<<UF_PATH))) {
-    request->path = strdup("./public/index.html");
+    snprintf(path, sizeof(path), "%s/index.html", static_dir);
+    request->path = strdup(path);
   } else {
-    char path[PATH_MAX];
     char* ptr = request->url + request->url_handle.field_data[UF_PATH].off;
     int len = request->url_handle.field_data[UF_PATH].len;
-    snprintf(path, sizeof(path), "./public%.*s", len, ptr);
+    snprintf(path, sizeof(path), "%s%.*s", static_dir, len, ptr);
     if (*(ptr + len - 1) == '/') {
       strcat(path, "index.html");
     }
@@ -401,7 +403,7 @@ on_request_complete(http_parser* parser, http_request* request) {
     fprintf(stderr, "Stat error %s\n", uv_err_name(r));
     free(stat_req);
     uv_close((uv_handle_t*) request->handle, NULL);
-    response_error(request->handle, 404, "Not Found", NULL);
+    response_error(request->handle, 404, "Not Found\n", NULL);
     destroy_request(request, 1);
   }
 }
@@ -484,20 +486,18 @@ main(int argc, char* argv[]) {
   int i;
   for (i = 1; i < argc; i++) {
     if (!strcmp(argv[i], "-a")) {
-      if (i < argc-1) {
-        ipaddr = argv[++i];
-      } else {
-        usage(argv[0]);
-      }
-    }
+      if (i == argc-1) usage(0);
+      ipaddr = argv[++i];
+    } else
     if (!strcmp(argv[i], "-p")) {
-      if (i < argc-1) {
-        char* e = NULL;
-        port = strtol(argv[++i], &e, 10);
-        if (e && *e) usage(argv[0]);
-      } else {
-        usage(argv[0]);
-      }
+      if (i == argc-1) usage(0);
+      char* e = NULL;
+      port = strtol(argv[++i], &e, 10);
+      if (e && *e) usage(argv[0]);
+    } else
+    if (!strcmp(argv[i], "-d")) {
+      if (i == argc-1) usage(0);
+      static_dir = argv[++i];
     }
   }
 
