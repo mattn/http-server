@@ -329,10 +329,11 @@ on_fs_stat(uv_fs_t* req) {
       sizeof(bufline),
       "HTTP/1.1 200 OK\r\n"
       "Content-Length: %" PRId64 "\r\n"
-      "Content-Type: text/html; charset=UTF-8;\r\n"
+      "Content-Type: %s\r\n"
       "Connection: %s\r\n"
       "\r\n",
       request->size,
+      ctype,
       (request->keep_alive ? "keep-alive" : "close"));
   uv_write_t* write_req = malloc(sizeof(uv_write_t));
   uv_buf_t buf = uv_buf_init(bufline, strlen(bufline));
