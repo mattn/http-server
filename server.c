@@ -176,11 +176,32 @@ on_read(uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf) {
     return;
   }
 
-  if (strstr((char*) buf->base, "\r\n\r\n")) {
-    http_parser* parser = (http_parser*) stream->data;
+#define END_WITH(p,l) (l>=4 && (*(p+l-4)=='\r' && *(p+l-3)=='\n' && *(p+l-2)=='\r' && *(p+l-1)=='\n')||(l>=2 && *(p+l-2)=='\n' && *(p+l-1)=='\n'))
+  if (END_WITH(buf->base, nread)) {
+    http_parser* parser = malloc(sizeof(http_parser));
+    if (parser == NULL) {
+      fprintf(stderr, "Allocate error\n");
+      uv_close((uv_handle_t*) stream, NULL);
+      return;
+    }
+    http_parser_init(parser, HTTP_REQUEST);
+
+    http_request* request = malloc(sizeof(http_request));
+    if (request == NULL) {
+      fprintf(stderr, "Allocate error\n");
+      uv_close((uv_handle_t*) stream, NULL);
+      return;
+    }
+    parser->data = request;
+  
+    memset(request, 0, sizeof(http_request));
+    request->handle = (uv_handle_t*) stream;
+    request->on_request_complete = on_request_complete;
+    stream->data = parser;
+
     size_t nparsed = http_parser_execute(parser, &parser_settings, buf->base, nread);
-    free(buf->base);
   }
+  free(buf->base);
 }
 
 static void on_close(uv_handle_t* peer) {
@@ -441,27 +462,6 @@ on_connection(uv_stream_t* server, int status) {
     fprintf(stderr, "Flag error %s\n", uv_err_name(r));
     return;
   }
-
-  http_parser* parser = malloc(sizeof(http_parser));
-  if (parser == NULL) {
-    fprintf(stderr, "Allocate error\n");
-    uv_close((uv_handle_t*) stream, NULL);
-    return;
-  }
-  http_parser_init(parser, HTTP_REQUEST);
-
-  http_request* request = malloc(sizeof(http_request));
-  if (request == NULL) {
-    fprintf(stderr, "Allocate error\n");
-    uv_close((uv_handle_t*) stream, NULL);
-    return;
-  }
-  parser->data = request;
-
-  memset(request, 0, sizeof(http_request));
-  request->handle = (uv_handle_t*) stream;
-  request->on_request_complete = on_request_complete;
-  stream->data = parser;
 
   r = uv_read_start(stream, on_alloc, on_read);
   if (r) {
