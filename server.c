@@ -115,12 +115,15 @@ destroy_request(http_request* request, int close_handle) {
 static void
 destroy_response(http_response* response, int close_handle) {
   if (response->pbuf) free(response->pbuf);
-  if (response->handle->data) free(response->handle->data);
+  //if (response->handle) free(response->handle);
   if (response->request) destroy_request(response->request, close_handle);
   if (response->open_req) {
     uv_fs_t close_req;
     uv_fs_close(loop, &close_req, response->open_req->result, NULL);
     free(response->open_req);
+  }
+  if (response->read_req) {
+    free(response->read_req);
   }
   free(response);
 }
@@ -143,29 +146,7 @@ on_write(uv_write_t* req, int status) {
     return;
   }
 
-  uv_stream_t* stream = (uv_stream_t*) response->handle;
   destroy_response(response, 0);
-
-  http_parser* parser = malloc(sizeof(http_parser));
-  if (parser == NULL) {
-    fprintf(stderr, "Allocate error\n");
-    uv_close((uv_handle_t*) stream, on_close);
-    return;
-  }
-  http_parser_init(parser, HTTP_REQUEST);
-
-  http_request* request = malloc(sizeof(http_request));
-  if (request == NULL) {
-    fprintf(stderr, "Allocate error\n");
-    uv_close((uv_handle_t*) stream, on_close);
-    return;
-  }
-  parser->data = request;
-
-  memset(request, 0, sizeof(http_request));
-  request->handle = (uv_handle_t*) stream;
-  request->on_request_complete = on_request_complete;
-  stream->data = parser;
 }
 
 static void
@@ -222,6 +203,7 @@ on_read(uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf) {
     stream->data = parser;
 
     size_t nparsed = http_parser_execute(parser, &parser_settings, buf->base, nread);
+    free(parser);
   }
   free(buf->base);
 }
@@ -431,6 +413,13 @@ on_request_complete(http_parser* parser, http_request* request) {
       strcat(path, "index.html");
     }
     request->path = strdup(path);
+    /*
+    if (strstr(path, "quit")) {
+      destroy_request(request, 1);
+      uv_stop(loop);
+      return;
+    }
+    */
   }
   request->keep_alive = http_should_keep_alive(parser);
 
@@ -440,7 +429,6 @@ on_request_complete(http_parser* parser, http_request* request) {
     return;
   }
   stat_req->data = request;
-  //printf("%s\n", request->path);
   int r = uv_fs_stat(loop, stat_req, request->path, on_fs_stat);
   if (r) {
     fprintf(stderr, "Stat error %s\n", uv_err_name(r));
