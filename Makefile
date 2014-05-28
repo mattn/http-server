@@ -9,12 +9,12 @@ HEADERS = \
 	server.h
 
 ifeq (Windows_NT,$(OS))
-CFLAGS = -D_WIN32_WINNT=0x0600
-LIBS = -luv -lws2_32 -lpsapi -liphlpapi
+CFLAGS = -Ilibuv/include -D_WIN32_WINNT=0x0600
+LIBS = -Llibuv -luv -lws2_32 -lpsapi -liphlpapi
 TARGET = server.exe
 else
-CFLAGS =
-LIBS = -luv
+CFLAGS = -Ilibuv/include -g
+LIBS = -Llibuv/.libs -luv -lpthread -lrt -g
 TARGET = server
 endif
 

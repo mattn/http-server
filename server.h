@@ -4,6 +4,7 @@
 #include <uv.h>
 #include "http_parser.h"
 #include "klist.h"
+#include "khash.h"
 
 /* header element */
 typedef struct {

@@ -1,17 +1,21 @@
 #include <uv.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
 #include <fcntl.h>
+#include <limits.h>
+#include <inttypes.h>
 #include "server.h"
 
 #define ASSERT(expr)                                      \
  do {                                                     \
   if (!(expr)) {                                          \
     fprintf(stderr,                                       \
-            "Assertion failed in %s on line %d: %s\n",    \
-            __FILE__,                                     \
-            __LINE__,                                     \
-            #expr);                                       \
+      "Assertion failed in %s on line %d: %s\n",          \
+      __FILE__,                                           \
+      __LINE__,                                           \
+      #expr);                                             \
     fflush(stderr);                                       \
     abort();                                              \
   }                                                       \
@@ -20,10 +24,10 @@
 #define FATAL(msg)                                        \
   do {                                                    \
     fprintf(stderr,                                       \
-            "Fatal error in %s on line %d: %s\n",         \
-            __FILE__,                                     \
-            __LINE__,                                     \
-            msg);                                         \
+      "Fatal error in %s on line %d: %s\n",               \
+      __FILE__,                                           \
+      __LINE__,                                           \
+      msg);                                               \
     fflush(stderr);                                       \
     abort();                                              \
   } while (0)
@@ -31,11 +35,38 @@
 static uv_loop_t* loop;
 static http_parser_settings parser_settings;
 
-static void on_write(uv_write_t* req, int status);
-static void on_read(uv_stream_t*, ssize_t nread, const uv_buf_t* buf);
-static void on_close(uv_handle_t* peer);
-static void on_server_close(uv_handle_t* handle);
-static void on_connection(uv_stream_t*, int status);
+KHASH_MAP_INIT_STR(mime_type, const char*)
+static khash_t(mime_type)* mime_type;
+
+#if 0
+#include <sys/time.h>
+void
+btime(int f) {
+  static struct timeval s;
+  struct timeval e;
+  if (f == 0) {
+    puts("start");
+    gettimeofday(&s, NULL);
+  } else {
+    puts("end");
+    gettimeofday(&e, NULL);
+    double startTime = s.tv_sec + (double)(s.tv_usec * 1e-6);
+    double endTime = e.tv_sec + (double)(e.tv_usec * 1e-6);
+    printf("%f\n", endTime - startTime);
+  }
+}
+#endif
+
+static void on_write(uv_write_t*, int);
+static void on_header_write(uv_write_t*, int);
+static void on_read(uv_stream_t*, ssize_t, const uv_buf_t*);
+static void on_close(uv_handle_t*);
+static void on_server_close(uv_handle_t*);
+static void on_connection(uv_stream_t*, int);
+static void on_alloc(uv_handle_t*, size_t, uv_buf_t*);
+static void on_request_complete(http_request*);
+static void on_fs_read(uv_fs_t*);
+static void response_error(uv_handle_t*, int, const char*, const char*);
 
 int on_message_begin(http_parser* _);
 int on_headers_complete(http_parser* _);
@@ -51,19 +82,23 @@ destroy_request(http_request* request, int close_handle) {
   if (request->payload) free(request->payload);
   if (request->url) free(request->url);
   if (request->path) free(request->path);
-  if (close_handle && request->handle) {
-    uv_close((uv_handle_t*) request->handle, NULL);
+  if (close_handle) {
+    if (request->handle) uv_close((uv_handle_t*) request->handle, NULL);
   }
   free(request);
 }
 
 static void
-destroy_response(http_response* response) {
+destroy_response(http_response* response, int close_handle) {
   if (response->pbuf) free(response->pbuf);
-  if (response->request) destroy_request(response->request, TRUE);
+  if (response->handle->data) free(response->handle->data);
   if (response->open_req) {
+    if (close_handle) {
+      if (response->request) destroy_request(response->request, 1);
+    }
     uv_fs_t close_req;
     uv_fs_close(loop, &close_req, response->open_req->result, NULL);
+    free(response->open_req);
   }
   free(response);
 }
@@ -71,10 +106,45 @@ destroy_response(http_response* response) {
 static void
 on_write(uv_write_t* req, int status) {
   http_response* response = (http_response*) req->data;
-  if (response->request->offset == response->request->size) {
-    destroy_response(response);
-    free(req);
+  free(req);
+
+  if (response->request->offset < response->request->size) {
+    int r = uv_fs_read(loop, response->read_req, response->open_req->result, &response->buf, 1, response->request->offset, on_fs_read);
+    if (r) {
+      response_error(response->handle, 500, "Internal Server Error", NULL);
+      destroy_request(response->request, 1);
+    }
+    return;
   }
+  if (!response->keep_alive) {
+    destroy_response(response, 1);
+    return;
+  }
+
+  if (response->request) destroy_request(response->request, 0);
+  uv_stream_t* stream = (uv_stream_t*) response->handle;
+  destroy_response(response, 0);
+
+  http_parser* parser = malloc(sizeof(http_parser));
+  if (parser == NULL) {
+    fprintf(stderr, "Allocate error\n");
+    uv_close((uv_handle_t*) stream, NULL);
+    return;
+  }
+  http_parser_init(parser, HTTP_REQUEST);
+
+  http_request* request = malloc(sizeof(http_request));
+  if (request == NULL) {
+    fprintf(stderr, "Allocate error\n");
+    uv_close((uv_handle_t*) stream, NULL);
+    return;
+  }
+  parser->data = request;
+
+  memset(request, 0, sizeof(http_request));
+  request->handle = (uv_handle_t*) stream;
+  request->on_request_complete = on_request_complete;
+  stream->data = parser;
 }
 
 static void
@@ -89,13 +159,16 @@ on_read(uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf) {
     if (buf->base) {
       free(buf->base);
     }
+    /*
     uv_shutdown_t* shutdown_req = (uv_shutdown_t*) malloc(sizeof(uv_shutdown_t));
     if (shutdown_req == NULL) {
-      uv_close((uv_handle_t*) stream, on_close);
       fprintf(stderr, "Allocate error\n");
+      uv_close((uv_handle_t*) stream, on_close);
       return;
     }
     uv_shutdown(shutdown_req, stream, on_shutdown);
+    */
+    uv_close((uv_handle_t*) stream, NULL);
     return;
   }
 
@@ -114,7 +187,7 @@ static void on_close(uv_handle_t* peer) {
 }
 
 static void
-on_alloc_cb(uv_handle_t* handle, size_t suggested_size, uv_buf_t* buf) {
+on_alloc(uv_handle_t* handle, size_t suggested_size, uv_buf_t* buf) {
   buf->base = malloc(suggested_size);
   buf->len = suggested_size;
 }
@@ -122,6 +195,7 @@ on_alloc_cb(uv_handle_t* handle, size_t suggested_size, uv_buf_t* buf) {
 static void
 response_error(uv_handle_t* handle, int status_code, const char* status, const char* message) {
   char bufline[1024];
+  puts("error");
   sprintf(bufline,
       "HTTP/1.0 %d %s\r\n"
       "Content-Length: 10\r\n"
@@ -131,8 +205,8 @@ response_error(uv_handle_t* handle, int status_code, const char* status, const c
   uv_write_t* write_req = malloc(sizeof(uv_write_t));
   uv_buf_t buf = uv_buf_init(bufline, strlen(bufline));
   int r = uv_write(write_req, (uv_stream_t*) handle, &buf, 1, NULL);
+  free(write_req);
   if (r) {
-    free(write_req);
     fprintf(stderr, "Write error %s\n", uv_err_name(r));
   }
 }
@@ -146,33 +220,30 @@ on_fs_read(uv_fs_t *req) {
   if (result < 0) {
     fprintf(stderr, "File read error %s\n", uv_err_name(result));
     response_error(response->handle, 500, "Internal Server Error", NULL);
-    destroy_response(response);
+    destroy_response(response, 1);
     return;
   } else if (result == 0) {
-    destroy_response(response);
-    free(req);
+    destroy_response(response, 1);
     return;
-  } else {
-    uv_write_t *write_req = (uv_write_t *) malloc(sizeof(uv_write_t));
-    write_req->data = response;
-    uv_buf_t buf = uv_buf_init(response->pbuf, result);
-    uv_write(write_req, (uv_stream_t*) response->handle, &buf, 1, on_write);
   }
 
-  response->request->offset += result;
-  if (response->request->offset >= response->request->size) {
-    free(req);
+  uv_write_t *write_req = (uv_write_t *) malloc(sizeof(uv_write_t));
+  if (write_req == NULL) {
+    fprintf(stderr, "Allocate error\n");
     return;
   }
-  int r = uv_fs_read(loop, response->read_req, response->open_req->result, &response->buf, 1, response->request->offset, on_fs_read);
+  write_req->data = response;
+  uv_buf_t buf = uv_buf_init(response->pbuf, result);
+  int r = uv_write(write_req, (uv_stream_t*) response->handle, &buf, 1, on_write);
   if (r) {
-    response_error(response->handle, 500, "Internal Server Error", NULL);
-    destroy_request(response->request, TRUE);
+    destroy_response(response, 1);
+    return;
   }
+  response->request->offset += result;
 }
 
 static void
-on_fs_open_cb(uv_fs_t* req) {
+on_fs_open(uv_fs_t* req) {
   http_request* request = (http_request*) req->data;
   int result = req->result;
 
@@ -180,7 +251,7 @@ on_fs_open_cb(uv_fs_t* req) {
   if (result < 0) {
     fprintf(stderr, "Open error %s\n", uv_err_name(result));
     response_error(request->handle, 404, "Not Found", NULL);
-    destroy_request(request, TRUE);
+    destroy_request(request, 1);
     return;
   }
 
@@ -199,12 +270,36 @@ on_fs_open_cb(uv_fs_t* req) {
   int r = uv_fs_read(loop, read_req, result, &response->buf, 1, offset, on_fs_read);
   if (r) {
     response_error(request->handle, 500, "Internal Server Error", NULL);
-    destroy_request(request, TRUE);
+    destroy_response(response, 1);
+  }
+  /*
+  r = uv_fs_read(loop, read_req, result, &response->buf, 1, offset, NULL);
+  if (r) {
+    response_error(request->handle, 500, "Internal Server Error", NULL);
+    destroy_response(response, 1);
+    return;
+  }
+  */
+}
+
+static void
+on_header_write(uv_write_t* req, int status) {
+  http_request* request = (http_request*) req->data;
+  free(req);
+
+  uv_fs_t* open_req = malloc(sizeof(uv_fs_t));
+  open_req->data = request;
+  int r = uv_fs_open(loop, open_req, request->path, O_RDONLY, S_IREAD, on_fs_open);
+  if (r) {
+    fprintf(stderr, "Open error %s\n", uv_err_name(r));
+    response_error(request->handle, 404, "Not Found", NULL);
+    destroy_request(request, 1);
+    free(open_req);
   }
 }
 
 static void
-on_fs_stat_cb(uv_fs_t* req) {
+on_fs_stat(uv_fs_t* req) {
   http_request* request = (http_request*) req->data;
   int result = req->result;
 
@@ -212,35 +307,41 @@ on_fs_stat_cb(uv_fs_t* req) {
   if (result < 0) {
     fprintf(stderr, "Stat error %s\n", uv_err_name(result));
     response_error(request->handle, 404, "Not Found", NULL);
-    destroy_request(request, TRUE);
+    destroy_request(request, 1);
     return;
   }
   request->size = req->statbuf.st_size;
 
+  const char* ctype = "application/octet-stream";
+  char* dot = request->path;
+  char* ptr = dot;
+  while (dot) {
+    ptr = dot;
+    dot = strchr(dot + 1, '.');
+  }
+  khint_t k = kh_get(mime_type, mime_type, ptr);
+  if (k != kh_end(mime_type)) {
+    ctype = kh_value(mime_type, k);
+  }
+
   char bufline[1024];
-  sprintf(bufline,
+  snprintf(bufline,
+      sizeof(bufline),
       "HTTP/1.1 200 OK\r\n"
-      "Content-Length: %ld\r\n"
+      "Content-Length: %" PRId64 "\r\n"
       "Content-Type: text/html; charset=UTF-8;\r\n"
-      "\r\n", request->size);
+      "Connection: %s\r\n"
+      "\r\n",
+      request->size,
+      (request->keep_alive ? "keep-alive" : "close"));
   uv_write_t* write_req = malloc(sizeof(uv_write_t));
   uv_buf_t buf = uv_buf_init(bufline, strlen(bufline));
-  int r = uv_write(write_req, (uv_stream_t*) request->handle, &buf, 1, NULL);
-  free(req);
+  write_req->data = request;
+  int r = uv_write(write_req, (uv_stream_t*) request->handle, &buf, 1, on_header_write);
   if (r) {
     free(write_req);
     fprintf(stderr, "Write error %s\n", uv_err_name(r));
     return;
-  }
-
-  uv_fs_t* open_req = malloc(sizeof(uv_fs_t));
-  open_req->data = request;
-  r = uv_fs_open(loop, open_req, request->path, O_RDONLY | O_BINARY, S_IREAD, on_fs_open_cb);
-  if (r) {
-    fprintf(stderr, "Open error %s\n", uv_err_name(r));
-    response_error(request->handle, 404, "Not Found", NULL);
-    destroy_request(request, TRUE);
-    free(open_req);
   }
 }
 
@@ -256,11 +357,14 @@ on_request_complete(http_request* request) {
     }
   }
 
-  if (request->url_handle.field_set & (1<<UF_PATH)) {
-    char path[MAX_PATH];
+  if (!(request->url_handle.field_set & (1<<UF_PATH))) {
+    request->path = strdup("./public/index.html");
+  } else {
+    char path[PATH_MAX];
     char* ptr = request->url + request->url_handle.field_data[UF_PATH].off;
     int len = request->url_handle.field_data[UF_PATH].len;
     snprintf(path, sizeof(path), "./public%.*s", len, ptr);
+    if (strstr(path, "quit")) exit(0);
     if (*(ptr + len - 1) == '/') {
       strcat(path, "index.html");
     }
@@ -269,13 +373,14 @@ on_request_complete(http_request* request) {
 
   uv_fs_t* stat_req = malloc(sizeof(uv_fs_t));
   stat_req->data = request;
-  int r = uv_fs_stat(loop, stat_req, request->path, on_fs_stat_cb);
+  //printf("%s\n", request->path);
+  int r = uv_fs_stat(loop, stat_req, request->path, on_fs_stat);
   if (r) {
     fprintf(stderr, "Stat error %s\n", uv_err_name(r));
+    free(stat_req);
     uv_close((uv_handle_t*) request->handle, NULL);
     response_error(request->handle, 404, "Not Found", NULL);
-    destroy_request(request, TRUE);
-    free(stat_req);
+    destroy_request(request, 1);
   }
 }
 
@@ -328,7 +433,7 @@ on_connection(uv_stream_t* server, int status) {
   request->on_request_complete = on_request_complete;
   stream->data = parser;
 
-  r = uv_read_start(stream, on_alloc_cb, on_read);
+  r = uv_read_start(stream, on_alloc, on_read);
   if (r) {
     fprintf(stderr, "Read error %s\n", uv_err_name(r));
     uv_close((uv_handle_t*) stream, NULL);
@@ -341,6 +446,13 @@ usage(const char* app) {
   fprintf(stderr, "    -a ADDR: specify address\n");
   fprintf(stderr, "    -p PORT: specify port number\n");
   exit(1);
+}
+
+static void
+add_mime_type(const char* ext, const char* value) {
+  int hr;
+  khint_t k = kh_put(mime_type, mime_type, ext, &hr);
+  kh_value(mime_type, k) = value;
 }
 
 int
@@ -380,6 +492,15 @@ main(int argc, char* argv[]) {
   parser_settings.on_headers_complete = on_headers_complete;
   parser_settings.on_body = on_body;
   parser_settings.on_message_complete = on_message_complete;
+
+  mime_type = kh_init(mime_type);
+  /*
+  add_mime_type(".jpg", "image/jpeg");
+  add_mime_type(".png", "image/png");
+  add_mime_type(".gif", "image/gif");
+  add_mime_type(".html", "text/html");
+  add_mime_type(".txt", "text/plain");
+  */
 
   r = uv_ip4_addr(ipaddr, 7000, &addr);
   if (r) {

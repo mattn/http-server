@@ -18,7 +18,7 @@ int on_headers_complete(http_parser* parser) {
   http_request* request = (http_request*) parser->data;
   if (request->last_field != NULL) {
     free(request->last_field);
-    request->last_field;
+    request->last_field = NULL;
   }
   return 0;
 }
@@ -67,16 +67,10 @@ int on_header_value(http_parser* parser, const char* at, size_t length) {
   memset(value, 0, length + 1);
   memcpy(value, at, length);
   header_elem elem;
-  elem.key = strdup(request->last_field);
-  if (elem.key == NULL) {
-    fprintf(stderr, "Allocate error\n");
-    free(value);
-    return 1;
-  }
+  elem.key = request->last_field;
+  request->last_field = NULL;
   elem.value = value;
   *kl_pushp(header, request->headers) = elem;
-  free(request->last_field);
-  request->last_field;
   return 0;
 }
 
