@@ -501,7 +501,7 @@ main(int argc, char* argv[]) {
   add_mime_type(".html", "text/html");
   add_mime_type(".txt", "text/plain");
 
-  r = uv_ip4_addr(ipaddr, 7000, &addr);
+  r = uv_ip4_addr(ipaddr, port, &addr);
   if (r) {
     fprintf(stderr, "Address error %s\n", uv_err_name(r));
     return 1;
