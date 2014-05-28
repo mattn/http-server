@@ -11,11 +11,11 @@ HEADERS = \
 ifeq (Windows_NT,$(OS))
 CFLAGS = -Ilibuv/include -D_WIN32_WINNT=0x0600
 LIBS = -Llibuv -luv -lws2_32 -lpsapi -liphlpapi
-TARGET = server.exe
+TARGET = http-server.exe
 else
 CFLAGS = -Ilibuv/include -g
 LIBS = -Llibuv/.libs -luv -lpthread -lrt -g
-TARGET = server
+TARGET = http-server
 endif
 
 all : $(TARGET)
