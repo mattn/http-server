@@ -13,7 +13,7 @@ CFLAGS = -Ilibuv/include -D_WIN32_WINNT=0x0600
 LIBS = -Llibuv -luv -lws2_32 -lpsapi -liphlpapi
 TARGET = http-server.exe
 else
-CFLAGS = -Ilibuv/include -g
+CFLAGS = -Ilibuv/include -O3 -g
 LIBS = -Llibuv/.libs -luv -lpthread -lrt -g
 TARGET = http-server
 endif
