@@ -85,7 +85,7 @@ destroy_request(http_request* request, int close_handle) {
   if (request->url) free(request->url);
   if (request->path) free(request->path);
   if (close_handle && request->handle) {
-    uv_close((uv_handle_t*) request->handle, NULL);
+    uv_close((uv_handle_t*) request->handle, on_close);
   }
   free(request);
 }
@@ -127,7 +127,7 @@ on_write(uv_write_t* req, int status) {
   http_parser* parser = malloc(sizeof(http_parser));
   if (parser == NULL) {
     fprintf(stderr, "Allocate error\n");
-    uv_close((uv_handle_t*) stream, NULL);
+    uv_close((uv_handle_t*) stream, on_close);
     return;
   }
   http_parser_init(parser, HTTP_REQUEST);
@@ -135,7 +135,7 @@ on_write(uv_write_t* req, int status) {
   http_request* request = malloc(sizeof(http_request));
   if (request == NULL) {
     fprintf(stderr, "Allocate error\n");
-    uv_close((uv_handle_t*) stream, NULL);
+    uv_close((uv_handle_t*) stream, on_close);
     return;
   }
   parser->data = request;
@@ -167,7 +167,7 @@ on_read(uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf) {
     }
     uv_shutdown(shutdown_req, stream, on_shutdown);
     */
-    uv_close((uv_handle_t*) stream, NULL);
+    uv_close((uv_handle_t*) stream, on_close);
     return;
   }
 
@@ -181,7 +181,7 @@ on_read(uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf) {
     http_parser* parser = malloc(sizeof(http_parser));
     if (parser == NULL) {
       fprintf(stderr, "Allocate error\n");
-      uv_close((uv_handle_t*) stream, NULL);
+      uv_close((uv_handle_t*) stream, on_close);
       return;
     }
     http_parser_init(parser, HTTP_REQUEST);
@@ -189,7 +189,7 @@ on_read(uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf) {
     http_request* request = malloc(sizeof(http_request));
     if (request == NULL) {
       fprintf(stderr, "Allocate error\n");
-      uv_close((uv_handle_t*) stream, NULL);
+      uv_close((uv_handle_t*) stream, on_close);
       return;
     }
     parser->data = request;
@@ -423,7 +423,7 @@ on_request_complete(http_parser* parser, http_request* request) {
   if (r) {
     fprintf(stderr, "Stat error %s\n", uv_err_name(r));
     free(stat_req);
-    uv_close((uv_handle_t*) request->handle, NULL);
+    uv_close((uv_handle_t*) request->handle, on_close);
     response_error(request->handle, 404, "Not Found\n", NULL);
     destroy_request(request, 1);
   }
@@ -466,7 +466,7 @@ on_connection(uv_stream_t* server, int status) {
   r = uv_read_start(stream, on_alloc, on_read);
   if (r) {
     fprintf(stderr, "Read error %s\n", uv_err_name(r));
-    uv_close((uv_handle_t*) stream, NULL);
+    uv_close((uv_handle_t*) stream, on_close);
   }
 }
 
