@@ -436,6 +436,12 @@ on_connection(uv_stream_t* server, int status) {
     return;
   }
 
+  r = uv_tcp_nodelay((uv_tcp_t*) stream, 1);
+  if (r) {
+    fprintf(stderr, "Flag error %s\n", uv_err_name(r));
+    return;
+  }
+
   http_parser* parser = malloc(sizeof(http_parser));
   if (parser == NULL) {
     fprintf(stderr, "Allocate error\n");
