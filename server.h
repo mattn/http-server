@@ -29,7 +29,7 @@ typedef struct _http_request {
   uint64_t offset;
   char* last_field;
   klist_t(header)* headers;
-  void (*on_request_complete)(struct _http_request*);
+  void (*on_request_complete)(http_parser*, struct _http_request*);
   uv_handle_t* handle;
   int keep_alive;
 } http_request;

@@ -25,7 +25,7 @@ int on_headers_complete(http_parser* parser) {
 
 int on_message_complete(http_parser* parser) {
   http_request* request = (http_request*) parser->data;
-  request->on_request_complete(request);
+  request->on_request_complete(parser, request);
   return 0;
 }
 

@@ -64,7 +64,7 @@ static void on_close(uv_handle_t*);
 static void on_server_close(uv_handle_t*);
 static void on_connection(uv_stream_t*, int);
 static void on_alloc(uv_handle_t*, size_t, uv_buf_t*);
-static void on_request_complete(http_request*);
+static void on_request_complete(http_parser*, http_request*);
 static void on_fs_read(uv_fs_t*);
 static void response_error(uv_handle_t*, int, const char*, const char*);
 
@@ -92,10 +92,8 @@ static void
 destroy_response(http_response* response, int close_handle) {
   if (response->pbuf) free(response->pbuf);
   if (response->handle->data) free(response->handle->data);
+  if (response->request) destroy_request(response->request, close_handle);
   if (response->open_req) {
-    if (close_handle) {
-      if (response->request) destroy_request(response->request, 1);
-    }
     uv_fs_t close_req;
     uv_fs_close(loop, &close_req, response->open_req->result, NULL);
     free(response->open_req);
@@ -121,7 +119,6 @@ on_write(uv_write_t* req, int status) {
     return;
   }
 
-  if (response->request) destroy_request(response->request, 0);
   uv_stream_t* stream = (uv_stream_t*) response->handle;
   destroy_response(response, 0);
 
@@ -347,17 +344,7 @@ on_fs_stat(uv_fs_t* req) {
 }
 
 static void
-on_request_complete(http_request* request) {
-  kliter_t(header)* it;
-  for (it = kl_begin(request->headers); it != kl_end(request->headers); it = kl_next(it)) {
-    header_elem elem = kl_val(it);
-    if (!strcasecmp(elem.key, "connection")) {
-      if (!strcasecmp(elem.value, "keep-alive")) {
-        request->keep_alive = 1;
-      }
-    }
-  }
-
+on_request_complete(http_parser* parser, http_request* request) {
   if (!(request->url_handle.field_set & (1<<UF_PATH))) {
     request->path = strdup("./public/index.html");
   } else {
@@ -365,12 +352,12 @@ on_request_complete(http_request* request) {
     char* ptr = request->url + request->url_handle.field_data[UF_PATH].off;
     int len = request->url_handle.field_data[UF_PATH].len;
     snprintf(path, sizeof(path), "./public%.*s", len, ptr);
-    if (strstr(path, "quit")) exit(0);
     if (*(ptr + len - 1) == '/') {
       strcat(path, "index.html");
     }
     request->path = strdup(path);
   }
+  request->keep_alive = http_should_keep_alive(parser);
 
   uv_fs_t* stat_req = malloc(sizeof(uv_fs_t));
   stat_req->data = request;
