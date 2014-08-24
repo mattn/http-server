@@ -502,19 +502,20 @@ main(int argc, char* argv[]) {
   int i;
   for (i = 1; i < argc; i++) {
     if (!strcmp(argv[i], "-a")) {
-      if (i == argc-1) usage(0);
+      if (i == argc-1) usage(argv[0]);
       ipaddr = argv[++i];
     } else
     if (!strcmp(argv[i], "-p")) {
-      if (i == argc-1) usage(0);
+      if (i == argc-1) usage(argv[0]);
       char* e = NULL;
       port = strtol(argv[++i], &e, 10);
       if (e && *e) usage(argv[0]);
     } else
     if (!strcmp(argv[i], "-d")) {
-      if (i == argc-1) usage(0);
+      if (i == argc-1) usage(argv[0]);
       static_dir = argv[++i];
-    }
+    } else
+      usage(argv[0]);
   }
 
   loop = uv_default_loop();
