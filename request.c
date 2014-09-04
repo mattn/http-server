@@ -29,7 +29,8 @@ int on_message_begin(http_parser* parser) {
   http_request* request = (http_request*) parser->data;
   request->size = 0;
   request->offset = 0;
-  request->url = NULL;
+  request->url[0] = 0;
+  request->path[0] = 0;
   request->payload = NULL;
   request->last_field = NULL;
   request->headers = kl_init(header);
@@ -57,11 +58,15 @@ int on_url(http_parser* parser, const char* at, size_t length) {
     fprintf(stderr, "Parse error %s\n", http_errno_description(parser->http_errno));
     return 1;
   }
+  /*
   request->url = malloc(length + 1);
   if (request->url == NULL) {
     fprintf(stderr, "Allocate error\n");
     return 1;
   }
+  */
+  if (length >= sizeof(request->url))
+    return 1;
   memcpy(request->url, at, length);
   *(request->url + length) = 0;
   return 0;
@@ -74,8 +79,8 @@ int on_header_field(http_parser* parser, const char* at, size_t length) {
     fprintf(stderr, "Allocate error\n");
     return 1;
   }
-  memset(request->last_field, 0, length + 1);
   memcpy(request->last_field, at, length);
+  *(request->last_field + length) = 0;
   return 0;
 }
 
@@ -86,8 +91,8 @@ int on_header_value(http_parser* parser, const char* at, size_t length) {
     fprintf(stderr, "Allocate error\n");
     return 1;
   }
-  memset(value, 0, length + 1);
   memcpy(value, at, length);
+  *(value + length) = 0;
   header_elem elem;
   elem.key = request->last_field;
   request->last_field = NULL;
@@ -103,8 +108,8 @@ int on_body(http_parser* parser, const char* at, size_t length) {
     fprintf(stderr, "Allocate error\n");
     return 1;
   }
-  memset(payload, 0, length + 1);
   memcpy(payload, at, length);
+  *(payload + length) = 0;
   request->payload = payload;
   return 0;
 }

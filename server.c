@@ -104,8 +104,6 @@ static void
 destroy_request(http_request* request, int close_handle) {
   kl_destroy(header, request->headers);
   if (request->payload) free(request->payload);
-  if (request->url) free(request->url);
-  if (request->path) free(request->path);
   if (close_handle && request->handle) {
     uv_close((uv_handle_t*) request->handle, on_close);
   }
@@ -181,29 +179,19 @@ on_read(uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf) {
 
 #define END_WITH(p,l) (l>=4 && (*(p+l-4)=='\r' && *(p+l-3)=='\n' && *(p+l-2)=='\r' && *(p+l-1)=='\n')||(l>=2 && *(p+l-2)=='\n' && *(p+l-1)=='\n'))
   if (END_WITH(buf->base, nread)) {
-    http_parser* parser = malloc(sizeof(http_parser));
-    if (parser == NULL) {
-      fprintf(stderr, "Allocate error\n");
-      uv_close((uv_handle_t*) stream, on_close);
-      return;
-    }
-    http_parser_init(parser, HTTP_REQUEST);
-
-    http_request* request = malloc(sizeof(http_request));
+    http_request* request = calloc(1, sizeof(http_request));
     if (request == NULL) {
       fprintf(stderr, "Allocate error\n");
       uv_close((uv_handle_t*) stream, on_close);
       return;
     }
-    parser->data = request;
-  
-    memset(request, 0, sizeof(http_request));
     request->handle = (uv_handle_t*) stream;
     request->on_request_complete = on_request_complete;
-    stream->data = parser;
+    http_parser_init(&request->parser, HTTP_REQUEST);
+    request->parser.data = request;
+    stream->data = request;
 
-    size_t nparsed = http_parser_execute(parser, &parser_settings, buf->base, nread);
-    free(parser);
+    size_t nparsed = http_parser_execute(&request->parser, &parser_settings, buf->base, nread);
   }
   free(buf->base);
 }
@@ -289,14 +277,13 @@ on_fs_open(uv_fs_t* req) {
     return;
   }
 
-  http_response* response = malloc(sizeof(http_response));
+  http_response* response = calloc(1, sizeof(http_response));
   if (response == NULL) {
     fprintf(stderr, "Allocate error\n");
     response_error(request->handle, 404, "Not Found\n", NULL);
     destroy_request(request, 1);
     return;
   }
-  memset(response, 0, sizeof(http_response));
   response->open_req = req;
   response->request = request;
   response->handle = request->handle;
@@ -401,18 +388,15 @@ on_fs_stat(uv_fs_t* req) {
 
 static void
 on_request_complete(http_parser* parser, http_request* request) {
-  char path[PATH_MAX];
   if (!(request->url_handle.field_set & (1<<UF_PATH))) {
-    snprintf(path, sizeof(path), "%s/index.html", static_dir);
-    request->path = strdup(path);
+    snprintf(request->path, sizeof(request->path), "%s/index.html", static_dir);
   } else {
     char* ptr = request->url + request->url_handle.field_data[UF_PATH].off;
     int len = request->url_handle.field_data[UF_PATH].len;
-    snprintf(path, sizeof(path), "%s%.*s", static_dir, len, ptr);
+    snprintf(request->path, sizeof(request->path), "%s%.*s", static_dir, len, ptr);
     if (*(ptr + len - 1) == '/') {
-      strcat(path, "index.html");
+      strcat(request->path, "index.html");
     }
-    request->path = strdup(path);
     /*
     if (strstr(path, "quit")) {
       destroy_request(request, 1);
@@ -485,6 +469,7 @@ usage(const char* app) {
   fprintf(stderr, "usage: %s [OPTIONS]\n", app);
   fprintf(stderr, "    -a ADDR: specify address\n");
   fprintf(stderr, "    -p PORT: specify port number\n");
+  fprintf(stderr, "    -d DIR:  specify root directory\n");
   exit(1);
 }
 
@@ -558,6 +543,7 @@ main(int argc, char* argv[]) {
     return 1;
   }
 
+  fprintf(stderr, "Listening %s:%d\n", ipaddr, port);
   r = uv_listen((uv_stream_t*)&server, SOMAXCONN, on_connection);
   if (r) {
     fprintf(stderr, "Listen error %s\n", uv_err_name(r));
