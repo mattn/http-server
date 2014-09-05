@@ -30,26 +30,29 @@
 
 /* header element */
 typedef struct {
-  char* key;
-  char* value;
+  const char* key_ptr;
+  size_t key_len;
+  const char* value_ptr;
+  size_t value_len;
 } header_elem;
 
 /* element free for klist */
 inline static header_elem_free(void* p) {
   header_elem* elem = (header_elem*) p;
-  free(elem->key);
-  free(elem->value);
 }
 KLIST_INIT(header, header_elem, header_elem_free);
 
 typedef struct _http_request {
   struct http_parser_url url_handle;
-  char url[2049];
+  const char* url_ptr;
+  size_t url_len;
   char path[PATH_MAX];
-  char* payload;
+  const char* payload_ptr;
+  size_t payload_len;
   uint64_t size;
   uint64_t offset;
-  char* last_field;
+  const char* last_field_ptr;
+  size_t last_field_len;
   klist_t(header)* headers;
   uv_handle_t* handle;
   int keep_alive;

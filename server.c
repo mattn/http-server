@@ -103,7 +103,6 @@ int on_body(http_parser* _, const char* at, size_t length);
 static void
 destroy_request(http_request* request, int close_handle) {
   kl_destroy(header, request->headers);
-  if (request->payload) free(request->payload);
   if (close_handle && request->handle) {
     uv_close((uv_handle_t*) request->handle, on_close);
   }
@@ -391,7 +390,7 @@ on_request_complete(http_parser* parser, http_request* request) {
   if (!(request->url_handle.field_set & (1<<UF_PATH))) {
     snprintf(request->path, sizeof(request->path), "%s/index.html", static_dir);
   } else {
-    char* ptr = request->url + request->url_handle.field_data[UF_PATH].off;
+    const char* ptr = request->url + request->url_handle.field_data[UF_PATH].off;
     int len = request->url_handle.field_data[UF_PATH].len;
     snprintf(request->path, sizeof(request->path), "%s%.*s", static_dir, len, ptr);
     if (*(ptr + len - 1) == '/') {
