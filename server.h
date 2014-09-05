@@ -58,6 +58,7 @@ typedef struct _http_request {
 } http_request;
 
 typedef struct {
+  uv_write_t write_req;
   uv_fs_t* open_req;
   uv_fs_t read_req;
   char* pbuf;

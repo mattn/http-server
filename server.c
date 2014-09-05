@@ -124,7 +124,6 @@ destroy_response(http_response* response, int close_handle) {
 static void
 on_write(uv_write_t* req, int status) {
   http_response* response = (http_response*) req->data;
-  free(req);
 
   if (response->request->offset < response->request->size) {
     int r = uv_fs_read(loop, &response->read_req, response->open_req->result, &response->buf, 1, response->request->offset, on_fs_read);
@@ -244,14 +243,8 @@ on_fs_read(uv_fs_t *req) {
     return;
   }
 
-  uv_write_t *write_req = (uv_write_t *) malloc(sizeof(uv_write_t));
-  if (write_req == NULL) {
-    fprintf(stderr, "Allocate error\n");
-    return;
-  }
-  write_req->data = response;
   uv_buf_t buf = uv_buf_init(response->pbuf, result);
-  int r = uv_write(write_req, (uv_stream_t*) response->handle, &buf, 1, on_write);
+  int r = uv_write(&response->write_req, (uv_stream_t*) response->handle, &buf, 1, on_write);
   if (r) {
     destroy_response(response, 1);
     return;
@@ -283,6 +276,7 @@ on_fs_open(uv_fs_t* req) {
   response->request = request;
   response->handle = request->handle;
   response->pbuf = calloc(8192, 1);
+  response->write_req.data = response;
   if (response->pbuf == NULL) {
     fprintf(stderr, "Allocate error\n");
     response_error(request->handle, 404, "Not Found\n", NULL);
