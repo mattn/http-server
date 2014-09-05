@@ -286,7 +286,7 @@ on_fs_open(uv_fs_t* req) {
   response->open_req = req;
   response->request = request;
   response->handle = request->handle;
-  response->pbuf = malloc(8192);
+  response->pbuf = calloc(8192, 1);
   if (response->pbuf == NULL) {
     fprintf(stderr, "Allocate error\n");
     response_error(request->handle, 404, "Not Found\n", NULL);
@@ -390,7 +390,7 @@ on_request_complete(http_parser* parser, http_request* request) {
   if (!(request->url_handle.field_set & (1<<UF_PATH))) {
     snprintf(request->path, sizeof(request->path), "%s/index.html", static_dir);
   } else {
-    const char* ptr = request->url + request->url_handle.field_data[UF_PATH].off;
+    const char* ptr = request->url_ptr + request->url_handle.field_data[UF_PATH].off;
     int len = request->url_handle.field_data[UF_PATH].len;
     snprintf(request->path, sizeof(request->path), "%s%.*s", static_dir, len, ptr);
     if (*(ptr + len - 1) == '/') {

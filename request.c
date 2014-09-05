@@ -28,15 +28,7 @@
 int
 on_message_begin(http_parser* parser) {
   http_request* request = (http_request*) parser->data;
-  request->size = 0;
-  request->offset = 0;
-  request->url_ptr = NULL;
-  request->url_len = 0;
   request->path[0] = 0;
-  request->payload_ptr = NULL;
-  request->payload_len = 0;
-  request->last_field_ptr = NULL;
-  request->last_field_len = 0;
   request->headers = kl_init(header);
   return 0;
 }
