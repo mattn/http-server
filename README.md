@@ -1,6 +1,6 @@
 # http-server
 
-http server written in C.
+A fast http server written in C.
 
 ## Usage
 
@@ -17,6 +17,13 @@ $ ./http-server
 ```
 $ make
 ```
+
+# Benchmark
+
+## Windows(Core i5/3Hz)
+
+$ ab -k -c 10 -n 10000 http://127.0.0.1:7000/
+
 
 # License
 
