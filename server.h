@@ -39,23 +39,31 @@ typedef struct {
 inline static header_elem_free(void* p) {}
 KLIST_INIT(header, header_elem, header_elem_free);
 
+#define REQUEST_BUF(x) \
+  const char* x ## _ptr; \
+  size_t x ## _len;
+
 typedef struct _http_request {
+  uv_handle_t* handle;
+
+  http_parser parser;
   struct http_parser_url url_handle;
-  const char* url_ptr;
-  size_t url_len;
+
   char path[PATH_MAX];
-  const char* payload_ptr;
-  size_t payload_len;
+
+  REQUEST_BUF(url)
+  REQUEST_BUF(payload)
+  REQUEST_BUF(last_field)
+
   uint64_t response_size;
   uint64_t response_offset;
-  const char* last_field_ptr;
-  size_t last_field_len;
+
   klist_t(header)* headers;
-  uv_handle_t* handle;
   int keep_alive;
-  http_parser parser;
   void (*on_request_complete)(http_parser*, struct _http_request*);
 } http_request;
+
+#undef REQUEST_BUF
 
 typedef struct {
   uv_write_t write_req;
