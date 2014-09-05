@@ -36,7 +36,8 @@ typedef struct {
   size_t value_len;
 } header_elem;
 
-KLIST_INIT(header, header_elem, NULL);
+inline static header_elem_free(void* p) {}
+KLIST_INIT(header, header_elem, header_elem_free);
 
 typedef struct _http_request {
   struct http_parser_url url_handle;
