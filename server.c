@@ -112,15 +112,11 @@ destroy_request(http_request* request, int close_handle) {
 static void
 destroy_response(http_response* response, int close_handle) {
   if (response->pbuf) free(response->pbuf);
-  //if (response->handle) free(response->handle);
   if (response->request) destroy_request(response->request, close_handle);
   if (response->open_req) {
     uv_fs_t close_req;
     uv_fs_close(loop, &close_req, response->open_req->result, NULL);
     free(response->open_req);
-  }
-  if (response->read_req) {
-    free(response->read_req);
   }
   free(response);
 }
@@ -131,7 +127,7 @@ on_write(uv_write_t* req, int status) {
   free(req);
 
   if (response->request->offset < response->request->size) {
-    int r = uv_fs_read(loop, response->read_req, response->open_req->result, &response->buf, 1, response->request->offset, on_fs_read);
+    int r = uv_fs_read(loop, &response->read_req, response->open_req->result, &response->buf, 1, response->request->offset, on_fs_read);
     if (r) {
       response_error(response->handle, 500, "Internal Server Error", NULL);
       destroy_request(response->request, 1);
@@ -296,16 +292,8 @@ on_fs_open(uv_fs_t* req) {
   response->buf = uv_buf_init(response->pbuf, 8192);
   response->keep_alive = request->keep_alive;
   int offset = -1;
-  uv_fs_t* read_req = malloc(sizeof(uv_fs_t));
-  if (read_req == NULL) {
-    fprintf(stderr, "Allocate error\n");
-    response_error(request->handle, 404, "Not Found\n", NULL);
-    destroy_response(response, 1);
-    return;
-  }
-  read_req->data = response;
-  response->read_req = read_req;
-  int r = uv_fs_read(loop, read_req, result, &response->buf, 1, offset, on_fs_read);
+  response->read_req.data = response;
+  int r = uv_fs_read(loop, &response->read_req, result, &response->buf, 1, offset, on_fs_read);
   if (r) {
     response_error(request->handle, 500, "Internal Server Error\n", NULL);
     destroy_response(response, 1);
@@ -396,13 +384,6 @@ on_request_complete(http_parser* parser, http_request* request) {
     if (*(ptr + len - 1) == '/') {
       strcat(request->path, "index.html");
     }
-    /*
-    if (strstr(path, "quit")) {
-      destroy_request(request, 1);
-      uv_stop(loop);
-      return;
-    }
-    */
   }
   request->keep_alive = http_should_keep_alive(parser);
 
