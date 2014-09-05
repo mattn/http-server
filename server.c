@@ -125,8 +125,8 @@ static void
 on_write(uv_write_t* req, int status) {
   http_response* response = (http_response*) req->data;
 
-  if (response->request->offset < response->request->size) {
-    int r = uv_fs_read(loop, &response->read_req, response->open_req->result, &response->buf, 1, response->request->offset, on_fs_read);
+  if (response->request->response_offset < response->request->response_size) {
+    int r = uv_fs_read(loop, &response->read_req, response->open_req->result, &response->buf, 1, response->request->response_offset, on_fs_read);
     if (r) {
       response_error(response->handle, 500, "Internal Server Error", NULL);
       destroy_request(response->request, 1);
@@ -249,7 +249,7 @@ on_fs_read(uv_fs_t *req) {
     destroy_response(response, 1);
     return;
   }
-  response->request->offset += result;
+  response->request->response_offset += result;
 }
 
 static void
@@ -326,7 +326,7 @@ on_fs_stat(uv_fs_t* req) {
     return;
   }
   uv_fs_req_cleanup(req);
-  request->size = req->statbuf.st_size;
+  request->response_size = req->statbuf.st_size;
   free(req);
 
   const char* ctype = "application/octet-stream";
@@ -349,7 +349,7 @@ on_fs_stat(uv_fs_t* req) {
       "Content-Type: %s\r\n"
       "Connection: %s\r\n"
       "\r\n",
-      request->size,
+      request->response_size,
       ctype,
       (request->keep_alive ? "keep-alive" : "close"));
   uv_write_t* write_req = malloc(sizeof(uv_write_t));

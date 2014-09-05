@@ -46,8 +46,8 @@ typedef struct _http_request {
   char path[PATH_MAX];
   const char* payload_ptr;
   size_t payload_len;
-  uint64_t size;
-  uint64_t offset;
+  uint64_t response_size;
+  uint64_t response_offset;
   const char* last_field_ptr;
   size_t last_field_len;
   klist_t(header)* headers;
