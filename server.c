@@ -54,6 +54,8 @@
     abort();                                              \
   } while (0)
 
+#define WRITE_BUF_SIZE (8192/4)
+
 static uv_loop_t* loop;
 static http_parser_settings parser_settings;
 static char* static_dir = "./public";
@@ -82,7 +84,6 @@ btime(int f) {
 
 static void on_write(uv_write_t*, int);
 static void on_write_error(uv_write_t*, int);
-static void on_header_write(uv_write_t*, int);
 static void on_read(uv_stream_t*, ssize_t, const uv_buf_t*);
 static void on_close(uv_handle_t*);
 static void on_server_close(uv_handle_t*);
@@ -113,10 +114,9 @@ static void
 destroy_response(http_response* response, int close_handle) {
   if (response->pbuf) free(response->pbuf);
   if (response->request) destroy_request(response->request, close_handle);
-  if (response->open_req) {
+  if (response->fd != -1) {
     uv_fs_t close_req;
-    uv_fs_close(loop, &close_req, response->open_req->result, NULL);
-    free(response->open_req);
+    uv_fs_close(loop, &close_req, response->fd, NULL);
   }
   free(response);
 }
@@ -126,7 +126,7 @@ on_write(uv_write_t* req, int status) {
   http_response* response = (http_response*) req->data;
 
   if (response->request->response_offset < response->request->response_size) {
-    int r = uv_fs_read(loop, &response->read_req, response->open_req->result, &response->buf, 1, response->request->response_offset, on_fs_read);
+    int r = uv_fs_read(loop, &response->read_req, response->fd, &response->buf, 1, response->request->response_offset, on_fs_read);
     if (r) {
       response_error(response->handle, 500, "Internal Server Error", NULL);
       destroy_request(response->request, 1);
@@ -209,7 +209,7 @@ static void
 response_error(uv_handle_t* handle, int status_code, const char* status, const char* message) {
   char bufline[1024];
   const char* ptr = message ? message : status;
-  sprintf(bufline,
+  int nbuf = sprintf(bufline,
       "HTTP/1.0 %d %s\r\n"
       "Content-Length: %d\r\n"
       "Content-Type: text/plain; charset=UTF-8;\r\n"
@@ -220,7 +220,7 @@ response_error(uv_handle_t* handle, int status_code, const char* status, const c
     fprintf(stderr, "Allocate error\n");
     return;
   }
-  uv_buf_t buf = uv_buf_init(bufline, strlen(bufline));
+  uv_buf_t buf = uv_buf_init(bufline, nbuf);
   int r = uv_write(write_req, (uv_stream_t*) handle, &buf, 1, on_write_error);
   if (r) {
     fprintf(stderr, "Write error %s\n", uv_err_name(r));
@@ -258,6 +258,7 @@ on_fs_open(uv_fs_t* req) {
   int result = req->result;
 
   uv_fs_req_cleanup(req);
+  free(req);
   if (result < 0) {
     fprintf(stderr, "Open error %s\n", uv_err_name(result));
     response_error(request->handle, 404, "Not Found\n", NULL);
@@ -265,69 +266,17 @@ on_fs_open(uv_fs_t* req) {
     return;
   }
 
-  http_response* response = calloc(1, sizeof(http_response));
-  if (response == NULL) {
-    fprintf(stderr, "Allocate error\n");
-    response_error(request->handle, 404, "Not Found\n", NULL);
-    destroy_request(request, 1);
-    return;
-  }
-  response->open_req = req;
-  response->request = request;
-  response->handle = request->handle;
-  response->pbuf = calloc(8192, 1);
-  response->write_req.data = response;
-  if (response->pbuf == NULL) {
-    fprintf(stderr, "Allocate error\n");
-    response_error(request->handle, 404, "Not Found\n", NULL);
-    destroy_response(response, 1);
-    return;
-  }
-  response->buf = uv_buf_init(response->pbuf, 8192);
-  response->keep_alive = request->keep_alive;
-  int offset = -1;
-  response->read_req.data = response;
-  int r = uv_fs_read(loop, &response->read_req, result, &response->buf, 1, offset, on_fs_read);
+  uv_fs_t stat_req;
+  int r = uv_fs_fstat(loop, &stat_req, result, NULL);
   if (r) {
-    response_error(request->handle, 500, "Internal Server Error\n", NULL);
-    destroy_response(response, 1);
-  }
-}
-
-static void
-on_header_write(uv_write_t* req, int status) {
-  http_request* request = (http_request*) req->data;
-  free(req);
-
-  uv_fs_t* open_req = malloc(sizeof(uv_fs_t));
-  if (open_req == NULL) {
-    fprintf(stderr, "Allocate error\n");
-    return;
-  }
-  open_req->data = request;
-  int r = uv_fs_open(loop, open_req, request->path, O_RDONLY, S_IREAD, on_fs_open);
-  if (r) {
-    fprintf(stderr, "Open error %s\n", uv_err_name(r));
-    response_error(request->handle, 404, "Not Found\n", NULL);
-    destroy_request(request, 1);
-    free(open_req);
-  }
-}
-
-static void
-on_fs_stat(uv_fs_t* req) {
-  http_request* request = (http_request*) req->data;
-  int result = req->result;
-
-  if (result < 0) {
-    fprintf(stderr, "Stat error %s\n", uv_err_name(result));
+    fprintf(stderr, "Stat error %s\n", uv_err_name(r));
     response_error(request->handle, 404, "Not Found\n", NULL);
     destroy_request(request, 1);
     return;
   }
-  uv_fs_req_cleanup(req);
-  request->response_size = req->statbuf.st_size;
-  free(req);
+
+  request->response_size = stat_req.statbuf.st_size;
+  uv_fs_req_cleanup(&stat_req);
 
   const char* ctype = "application/octet-stream";
   char* dot = request->path;
@@ -341,8 +290,30 @@ on_fs_stat(uv_fs_t* req) {
     ctype = kh_value(mime_type, k);
   }
 
+  http_response* response = calloc(1, sizeof(http_response));
+  if (response == NULL) {
+    fprintf(stderr, "Allocate error\n");
+    response_error(request->handle, 404, "Not Found\n", NULL);
+    destroy_request(request, 1);
+    return;
+  }
+  response->fd = result;
+  response->request = request;
+  response->handle = request->handle;
+  response->pbuf = calloc(WRITE_BUF_SIZE, 1);
+  if (response->pbuf == NULL) {
+    fprintf(stderr, "Allocate error\n");
+    response_error(request->handle, 404, "Not Found\n", NULL);
+    destroy_response(response, 1);
+    return;
+  }
+  response->buf = uv_buf_init(response->pbuf, WRITE_BUF_SIZE);
+  response->keep_alive = request->keep_alive;
+  int offset = -1;
+  response->read_req.data = response;
+
   char bufline[1024];
-  snprintf(bufline,
+  int nbuf = snprintf(bufline,
       sizeof(bufline),
       "HTTP/1.1 200 OK\r\n"
       "Content-Length: %" PRId64 "\r\n"
@@ -352,18 +323,20 @@ on_fs_stat(uv_fs_t* req) {
       request->response_size,
       ctype,
       (request->keep_alive ? "keep-alive" : "close"));
-  uv_write_t* write_req = malloc(sizeof(uv_write_t));
-  if (write_req == NULL) {
-    fprintf(stderr, "Allocate error\n");
+  uv_buf_t buf = uv_buf_init(bufline, nbuf);
+
+  response->write_req.data = response;
+  r = uv_write(&response->write_req, (uv_stream_t*) request->handle, &buf, 1, NULL);
+  if (r) {
+    fprintf(stderr, "Write error %s\n", uv_err_name(r));
+    destroy_response(response, 1);
     return;
   }
-  uv_buf_t buf = uv_buf_init(bufline, strlen(bufline));
-  write_req->data = request;
-  int r = uv_write(write_req, (uv_stream_t*) request->handle, &buf, 1, on_header_write);
+
+  r = uv_fs_read(loop, &response->read_req, result, &response->buf, 1, offset, on_fs_read);
   if (r) {
-    free(write_req);
-    fprintf(stderr, "Write error %s\n", uv_err_name(r));
-    return;
+    response_error(request->handle, 500, "Internal Server Error\n", NULL);
+    destroy_response(response, 1);
   }
 }
 
@@ -381,19 +354,18 @@ on_request_complete(http_parser* parser, http_request* request) {
   }
   request->keep_alive = http_should_keep_alive(parser);
 
-  uv_fs_t* stat_req = malloc(sizeof(uv_fs_t));
-  if (stat_req == NULL) {
+  uv_fs_t* open_req = malloc(sizeof(uv_fs_t));
+  if (open_req == NULL) {
     fprintf(stderr, "Allocate error\n");
     return;
   }
-  stat_req->data = request;
-  int r = uv_fs_stat(loop, stat_req, request->path, on_fs_stat);
+  open_req->data = request;
+  int r = uv_fs_open(loop, open_req, request->path, O_RDONLY, S_IREAD, on_fs_open);
   if (r) {
-    fprintf(stderr, "Stat error %s\n", uv_err_name(r));
-    free(stat_req);
-    uv_close((uv_handle_t*) request->handle, on_close);
+    fprintf(stderr, "Open error %s\n", uv_err_name(r));
     response_error(request->handle, 404, "Not Found\n", NULL);
     destroy_request(request, 1);
+    free(open_req);
   }
 }
 
