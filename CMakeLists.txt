@@ -3,7 +3,9 @@ CMAKE_POLICY(SET CMP0003 NEW)
 
 PROJECT(http-server)
 
+IF (CMAKE_COMPILER_IS_GNUCC)
 SET(CMAKE_C_FLAGS "-O2 -g -Wall -Wno-unused-function ${CMAKE_C_FLAGS}")
+ENDIF()
 
 INCLUDE_DIRECTORIES(include deps/picohttpparser deps/klib)
 
