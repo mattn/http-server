@@ -36,7 +36,7 @@ typedef struct {
   size_t value_len;
 } header_elem;
 
-inline static header_elem_free(void* p) {}
+inline static void header_elem_free(void* p) {}
 KLIST_INIT(header, header_elem, header_elem_free);
 
 #define REQUEST_BUF(x) \
