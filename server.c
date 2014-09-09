@@ -500,7 +500,7 @@ main(int argc, char* argv[]) {
     return 1;
   }
 
-  r = uv_tcp_simultaneous_accepts((uv_tcp_t*) &server, TRUE);
+  r = uv_tcp_simultaneous_accepts((uv_tcp_t*) &server, 1);
   if (r) {
     fprintf(stderr, "Accept error: %s: %s\n", uv_err_name(r), uv_strerror(r));
     return 1;
