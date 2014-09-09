@@ -447,6 +447,11 @@ add_mime_type(const char* ext, const char* value) {
   kh_value(mime_type, k) = value;
 }
 
+static void
+on_signal(uv_signal_t* handle, int signum) {
+  uv_stop((uv_loop_t*) handle->data);
+}
+
 int
 main(int argc, char* argv[]) {
   char* ipaddr = "0.0.0.0";
@@ -521,6 +526,19 @@ main(int argc, char* argv[]) {
   r = uv_listen((uv_stream_t*)&server, SOMAXCONN, on_connection);
   if (r) {
     fprintf(stderr, "Listen error: %s: %s\n", uv_err_name(r), uv_strerror(r));
+    return 1;
+  }
+
+  uv_signal_t sig;
+  r = uv_signal_init(loop, &sig);
+  if (r) {
+    fprintf(stderr, "Signal error: %s: %s\n", uv_err_name(r), uv_strerror(r));
+    return 1;
+  }
+  sig.data = loop;
+  r = uv_signal_start(&sig, on_signal, SIGINT);
+  if (r) {
+    fprintf(stderr, "Signal error: %s: %s\n", uv_err_name(r), uv_strerror(r));
     return 1;
   }
 
