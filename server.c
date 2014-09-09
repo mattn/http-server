@@ -322,8 +322,8 @@ on_fs_open(uv_fs_t* req) {
   }
   response->buf = uv_buf_init(response->pbuf, WRITE_BUF_SIZE);
   response->keep_alive = request->keep_alive;
-  int offset = -1;
   response->read_req.data = response;
+  response->write_req.data = response;
 
   char bufline[1024];
   int nbuf = snprintf(bufline,
@@ -338,15 +338,24 @@ on_fs_open(uv_fs_t* req) {
       (request->keep_alive ? "keep-alive" : "close"));
   uv_buf_t buf = uv_buf_init(bufline, nbuf);
 
-  response->write_req.data = response;
+#ifndef _WIN32
+  r = uv_try_write((uv_stream_t*) request->handle, &buf, 1);
+  printf("%s\n", uv_strerror(r));
+  if (r == 0) {
+    fprintf(stderr, "Write error\n");
+    destroy_response(response, 1);
+    return;
+  }
+#else
   r = uv_write(&response->write_req, (uv_stream_t*) request->handle, &buf, 1, NULL);
   if (r) {
     fprintf(stderr, "Write error: %s: %s\n", uv_err_name(r), uv_strerror(r));
     destroy_response(response, 1);
     return;
   }
+#endif
 
-  r = uv_fs_read(loop, &response->read_req, result, &response->buf, 1, offset, on_fs_read);
+  r = uv_fs_read(loop, &response->read_req, result, &response->buf, 1, -1, on_fs_read);
   if (r) {
     response_error(request->handle, 500, "Internal Server Error\n", NULL);
     destroy_response(response, 1);
