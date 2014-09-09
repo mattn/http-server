@@ -340,7 +340,6 @@ on_fs_open(uv_fs_t* req) {
 
 #ifndef _WIN32
   r = uv_try_write((uv_stream_t*) request->handle, &buf, 1);
-  printf("%s\n", uv_strerror(r));
   if (r == 0) {
     fprintf(stderr, "Write error\n");
     destroy_response(response, 1);
