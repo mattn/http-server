@@ -124,21 +124,23 @@ static void
 on_write(uv_write_t* req, int status) {
   http_response* response = (http_response*) req->data;
 
-  if (response->request->response_offset < response->request->response_size) {
-    int r = uv_fs_read(loop, &response->read_req, response->fd, &response->buf, 1, response->request->response_offset, on_fs_read);
-    if (r) {
-      fprintf(stderr, "File read error: %s: %s\n", uv_err_name(r), uv_strerror(r));
-      response_error(response->handle, 500, "Internal Server Error", NULL);
-      destroy_request(response->request, 1);
-    }
-    return;
-  }
-  if (!response->keep_alive) {
+  if (status != 0) {
+    fprintf(stderr, "Write error: %s: %s\n", uv_err_name(status), uv_strerror(status));
     destroy_response(response, 1);
     return;
   }
 
-  destroy_response(response, 0);
+  if (response->request->response_offset >= response->request->response_size) {
+    destroy_response(response, !response->keep_alive);
+    return;
+  }
+
+  int r = uv_fs_read(loop, &response->read_req, response->fd, &response->buf, 1, response->request->response_offset, on_fs_read);
+  if (r) {
+    fprintf(stderr, "File read error: %s: %s\n", uv_err_name(r), uv_strerror(r));
+    response_error(response->handle, 500, "Internal Server Error", NULL);
+    destroy_request(response->request, 1);
+  }
 }
 
 /*
