@@ -9,7 +9,7 @@ ENDIF()
 
 INCLUDE_DIRECTORIES(include deps/picohttpparser deps/klib)
 
-ADD_EXECUTABLE(http-server server.c request.c http_parser.c)
+ADD_EXECUTABLE(http-server server.c request.c deps/picohttpparser/picohttpparser.c)
 TARGET_LINK_LIBRARIES(http-server uv)
 
 IF(WIN32)

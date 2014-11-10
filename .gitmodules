@@ -1,0 +1,6 @@
+[submodule "picohttpparser"]
+	path = deps/picohttpparser
+	url = https://github.com/h2o/picohttpparser
+[submodule "deps/picohttpparser"]
+	path = deps/picohttpparser
+	url = https://github.com/h2o/picohttpparser
