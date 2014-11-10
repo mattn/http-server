@@ -237,15 +237,10 @@ on_shutdown(uv_shutdown_t* req, int status) {
 */
 
 static int
-strrcmp(const char* s, size_t l, const char* t) {
-  return strlen(t) == l && memcmp(s, t, l) == 0;
-}
-
-static int
 find_header(http_request* request, const char* name) {
   int i;
   for (i = 0; i < request->num_headers; i++)
-    if (!strrcmp(request->headers[i].name, request->headers[i].name_len, name))
+    if (!strncasecmp(request->headers[i].name, name, request->headers[i].name_len))
       return i;
   return -1;
 }
@@ -254,8 +249,8 @@ static int
 find_header_value(http_request* request, const char* name, const char* value) {
   int i;
   for (i = 0; i < request->num_headers; i++)
-    if (!strrcmp(request->headers[i].name, request->headers[i].name_len, name) &&
-        !strrcmp(request->headers[i].value, request->headers[i].value_len, value))
+    if (strncasecmp(request->headers[i].name, name, request->headers[i].name_len) &&
+        strncasecmp(request->headers[i].value, value, request->headers[i].value_len))
       return 1;
   return 0;
 }
