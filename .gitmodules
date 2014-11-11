@@ -1,6 +1,6 @@
-[submodule "picohttpparser"]
-	path = deps/picohttpparser
-	url = https://github.com/h2o/picohttpparser
+[submodule "deps/libuv"]
+	path = deps/libuv
+	url = https://github.com/joyent/libuv
 [submodule "deps/picohttpparser"]
 	path = deps/picohttpparser
 	url = https://github.com/h2o/picohttpparser
