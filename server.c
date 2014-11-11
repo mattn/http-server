@@ -252,10 +252,16 @@ content_length(http_request* request) {
 static int
 find_header_value(http_request* request, const char* name, const char* value) {
   int i;
-  for (i = 0; i < request->num_headers; i++)
-    if (strncasecmp(request->headers[i].name, name, request->headers[i].name_len) &&
-        strncasecmp(request->headers[i].value, value, request->headers[i].value_len))
+  for (i = 0; i < request->num_headers; i++) {
+#ifdef DEBUG
+    printf("%.*s: %.*s\n",
+      (int) request->headers[i].name_len, request->headers[i].name,
+      (int) request->headers[i].value_len, request->headers[i].value);
+#endif
+    if (!strncasecmp(request->headers[i].name, name, request->headers[i].name_len) &&
+        !strncasecmp(request->headers[i].value, value, request->headers[i].value_len))
       return 1;
+  }
   return 0;
 }
 
