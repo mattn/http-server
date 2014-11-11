@@ -56,8 +56,6 @@ typedef struct _http_request {
   size_t last_len;
   char file_path[PATH_MAX];
 
-  uint64_t response_size;
-  uint64_t response_offset;
   int keep_alive;
 } http_request;
 
@@ -71,6 +69,10 @@ typedef struct {
   uv_buf_t buf;
   uv_handle_t* handle;
   int keep_alive;
+
+  uint64_t response_size;
+  uint64_t response_offset;
+
   http_request* request;
 } http_response;
 

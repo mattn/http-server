@@ -14,7 +14,7 @@ include_directories(SYSTEM ${LIBUV_INCLUDE_DIRS})
 
 include_directories(include deps/picohttpparser deps/libuv/include)
 
-add_executable(http-server server.c request.c deps/picohttpparser/picohttpparser.c)
+add_executable(http-server server.c deps/picohttpparser/picohttpparser.c)
 target_link_libraries(http-server -Ldeps/libuv uv)
 if(WIN32)
   target_link_libraries(http-server ws2_32 psapi iphlpapi)

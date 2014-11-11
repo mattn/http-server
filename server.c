@@ -119,12 +119,12 @@ on_write(uv_write_t* req, int status) {
     return;
   }
 
-  if (response->request->response_offset >= response->request->response_size) {
+  if (response->response_offset >= response->response_size) {
     destroy_response(response, !response->keep_alive);
     return;
   }
 
-  int r = uv_fs_read(loop, &response->read_req, response->fd, &response->buf, 1, response->request->response_offset, on_fs_read);
+  int r = uv_fs_read(loop, &response->read_req, response->fd, &response->buf, 1, response->response_offset, on_fs_read);
   if (r) {
     fprintf(stderr, "File read error: %s: %s\n", uv_err_name(r), uv_strerror(r));
     response_error(response->handle, 500, "Internal Server Error", NULL);
@@ -155,7 +155,7 @@ on_fs_open(uv_fs_t* req) {
     return;
   }
 
-  request->response_size = stat_req.statbuf.st_size;
+  uint64_t response_size = stat_req.statbuf.st_size;
   uv_fs_req_cleanup(&stat_req);
 
   const char* ctype = "application/octet-stream";
@@ -177,6 +177,7 @@ on_fs_open(uv_fs_t* req) {
     destroy_request(request, 1);
     return;
   }
+  response->response_size = response_size;
   response->fd = result;
   response->request = request;
   response->handle = request->handle;
@@ -200,7 +201,7 @@ on_fs_open(uv_fs_t* req) {
       "Content-Type: %s\r\n"
       "Connection: %s\r\n"
       "\r\n",
-      request->response_size,
+      response_size,
       ctype,
       (request->keep_alive ? "keep-alive" : "close"));
   uv_buf_t buf = uv_buf_init(bufline, nbuf);
@@ -398,7 +399,7 @@ on_fs_read(uv_fs_t *req) {
     destroy_response(response, 1);
     return;
   }
-  response->request->response_offset += result;
+  response->response_offset += result;
 }
 
 static void
