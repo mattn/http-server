@@ -54,6 +54,9 @@ typedef struct _http_request {
   struct phr_header headers[32];
   size_t num_headers;
   size_t last_len;
+  const char* payload;
+  size_t payload_len;
+
   char file_path[PATH_MAX];
 
   int keep_alive;

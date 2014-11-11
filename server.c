@@ -238,11 +238,14 @@ on_shutdown(uv_shutdown_t* req, int status) {
 */
 
 static int
-find_header(http_request* request, const char* name) {
+content_length(http_request* request) {
   int i;
+  char buf[16];
   for (i = 0; i < request->num_headers; i++)
-    if (!strncasecmp(request->headers[i].name, name, request->headers[i].name_len))
-      return i;
+    if (!strncasecmp(request->headers[i].name, "content-length", request->headers[i].name_len)) {
+      strncpy(buf, request->headers[i].value, request->headers[i].value_len);
+      return atol(buf);
+    }
   return -1;
 }
 
@@ -302,41 +305,48 @@ on_read(uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf) {
     return;
   }
 
-#define END_WITH(p,l) (l>=4 && ((*(p+l-4)=='\r' && *(p+l-3)=='\n' && *(p+l-2)=='\r' && *(p+l-1)=='\n')||(l>=2 && *(p+l-2)=='\n' && *(p+l-1)=='\n')))
-  if (END_WITH(buf->base, nread)) {
-    http_request* request = calloc(1, sizeof(http_request));
-    if (request == NULL) {
-      free(buf->base);
-      fprintf(stderr, "Allocate error: %s\n", strerror(errno));
-      uv_close((uv_handle_t*) stream, on_close);
-      return;
-    }
-    stream->data = request;
-
-    request->handle = (uv_handle_t*) stream;
-
-    request->num_headers = sizeof(request->headers) / sizeof(request->headers[0]);
-    int nparsed = phr_parse_request(
-            buf->base,
-            buf->len,
-            &request->method,
-            &request->method_len,
-            &request->path,
-            &request->path_len,
-            &request->minor_version,
-            request->headers,
-            &request->num_headers,
-            nread);
-    if (nparsed < nread) {
-      free(request);
-      free(buf->base);
-      fprintf(stderr, "Invalid request\n");
-      uv_close((uv_handle_t*) stream, on_close);
-      return;
-    } else {
-      request_complete(request);
-    }
+  http_request* request = calloc(1, sizeof(http_request));
+  if (request == NULL) {
+    free(buf->base);
+    fprintf(stderr, "Allocate error: %s\n", strerror(errno));
+    uv_close((uv_handle_t*) stream, on_close);
+    return;
   }
+  stream->data = request;
+
+  request->handle = (uv_handle_t*) stream;
+
+  request->num_headers = sizeof(request->headers) / sizeof(request->headers[0]);
+  int nparsed = phr_parse_request(
+          buf->base,
+          buf->len,
+          &request->method,
+          &request->method_len,
+          &request->path,
+          &request->path_len,
+          &request->minor_version,
+          request->headers,
+          &request->num_headers,
+          0);
+  if (nparsed < 0) {
+    free(request);
+    free(buf->base);
+    fprintf(stderr, "Invalid request\n");
+    uv_close((uv_handle_t*) stream, on_close);
+    return;
+  }
+  /*
+  int cl = content_length(request);
+  if (cl >= 0 && cl < buf->len - nparsed) {
+    free(request);
+    free(buf->base);
+    return;
+  }
+  */
+  /* TODO: handle reading whole payload */
+  request->payload = buf->base + nparsed;
+  request->payload_len = buf->len - nparsed;
+  request_complete(request);
   free(buf->base);
 }
 
