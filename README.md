@@ -23,7 +23,7 @@ $ mkdir build && cd build && cmake .. && make
 
 $ ab -k -c 10 -n 10000 http://127.0.0.1:7000/
 
-## Linux(Xeon 1.80GHz)
+### Linux(Xeon 1.80GHz)
 
 ```
 Server Software:
@@ -66,7 +66,7 @@ Percentage of the requests served within a certain time (ms)
 
 ```
 
-## Windows(Intel Core i5/3Hz)
+### Windows(Intel Core i5/3Hz)
 
 ```
 Server Software:
@@ -106,6 +106,47 @@ Percentage of the requests served within a certain time (ms)
   98%      3
   99%      3
  100%     12 (longest request)
+```
+
+### Linux(Intel Core i5/3Hz)
+
+```
+Server Software:        
+Server Hostname:        127.0.0.1
+Server Port:            7000
+
+Document Path:          /
+Document Length:        12 bytes
+
+Concurrency Level:      10
+Time taken for tests:   0.310 seconds
+Complete requests:      10000
+Failed requests:        0
+Keep-Alive requests:    10000
+Total transferred:      1000000 bytes
+HTML transferred:       120000 bytes
+Requests per second:    32291.29 [#/sec] (mean)
+Time per request:       0.310 [ms] (mean)
+Time per request:       0.031 [ms] (mean, across all concurrent requests)
+Transfer rate:          3153.45 [Kbytes/sec] received
+
+Connection Times (ms)
+              min  mean[+/-sd] median   max
+Connect:        0    0   0.0      0       1
+Processing:     0    0   0.2      0       5
+Waiting:        0    0   0.1      0       5
+Total:          0    0   0.2      0       5
+
+Percentage of the requests served within a certain time (ms)
+  50%      0
+  66%      0
+  75%      0
+  80%      0
+  90%      0
+  95%      0
+  98%      1
+  99%      1
+ 100%      5 (longest request)
 ```
 
 ## License
