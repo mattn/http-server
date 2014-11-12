@@ -19,7 +19,7 @@ $ ./http-server
 $ mkdir build && cd build && cmake .. && make
 ```
 
-# Benchmark
+## Benchmark
 
 $ ab -k -c 10 -n 10000 http://127.0.0.1:7000/
 
@@ -108,10 +108,10 @@ Percentage of the requests served within a certain time (ms)
  100%     12 (longest request)
 ```
 
-# License
+## License
 
 MIT
 
-# Author
+## Author
 
 Yasuhiro Matsumoto (a.k.a mattn)
