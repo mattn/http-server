@@ -24,7 +24,7 @@
 #define _SERVER_H_
 
 #include <uv.h>
-#include "http_parser.h"
+#include "picohttpparser.h"
 #include "klist.h"
 #include "khash.h"
 
@@ -46,21 +46,20 @@ KLIST_INIT(header, header_elem, header_elem_free);
 typedef struct _http_request {
   uv_handle_t* handle;
 
-  http_parser parser;
-  struct http_parser_url url_handle;
+  const char* method;
+  size_t method_len;
+  int minor_version;
+  const char* path;
+  size_t path_len;
+  struct phr_header headers[32];
+  size_t num_headers;
+  size_t last_len;
+  const char* payload;
+  size_t payload_len;
 
-  char path[PATH_MAX];
+  char file_path[PATH_MAX];
 
-  REQUEST_BUF(url)
-  REQUEST_BUF(payload)
-  REQUEST_BUF(last_field)
-
-  uint64_t response_size;
-  uint64_t response_offset;
-
-  klist_t(header)* headers;
   int keep_alive;
-  void (*on_request_complete)(http_parser*, struct _http_request*);
 } http_request;
 
 #undef REQUEST_BUF
@@ -73,6 +72,10 @@ typedef struct {
   uv_buf_t buf;
   uv_handle_t* handle;
   int keep_alive;
+
+  uint64_t response_size;
+  uint64_t response_offset;
+
   http_request* request;
 } http_response;
 
