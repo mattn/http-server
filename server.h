@@ -25,19 +25,7 @@
 
 #include <uv.h>
 #include "picohttpparser.h"
-#include "klist.h"
 #include "khash.h"
-
-/* header element */
-typedef struct {
-  const char* key_ptr;
-  size_t key_len;
-  const char* value_ptr;
-  size_t value_len;
-} header_elem;
-
-inline static void header_elem_free(void* p) {}
-KLIST_INIT(header, header_elem, header_elem_free);
 
 #define REQUEST_BUF(x) \
   const char* x ## _ptr; \
