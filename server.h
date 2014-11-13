@@ -51,7 +51,6 @@ typedef struct {
   char* pbuf;
   uv_buf_t buf;
   uv_handle_t* handle;
-  int keep_alive;
 
   uint64_t response_size;
   uint64_t response_offset;

@@ -121,7 +121,7 @@ on_write(uv_write_t* req, int status) {
   }
 
   if (response->response_offset >= response->response_size) {
-    destroy_response(response, !response->keep_alive);
+    destroy_response(response, !response->request->keep_alive);
     return;
   }
 
@@ -190,7 +190,6 @@ on_fs_open(uv_fs_t* req) {
     return;
   }
   response->buf = uv_buf_init(response->pbuf, WRITE_BUF_SIZE);
-  response->keep_alive = request->keep_alive;
   response->read_req.data = response;
   response->write_req.data = response;
 
