@@ -3,7 +3,7 @@ project(http-server)
 include(ExternalProject)
 include(CheckLibraryExists)
 
-INCLUDE_DIRECTORIES(
+include_directories(
 	deps/picohttpparser
 	deps/libuv
 	deps/klib
