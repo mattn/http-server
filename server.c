@@ -452,6 +452,12 @@ on_connection(uv_stream_t* server, int status) {
     return;
   }
 
+  r = uv_tcp_simultaneous_accepts((uv_tcp_t*) stream, 1);
+  if (r) {
+    fprintf(stderr, "Flag error: %s: %s\n", uv_err_name(r), uv_strerror(r));
+    return;
+  }
+
   r = uv_read_start(stream, on_alloc, on_read);
   if (r) {
     fprintf(stderr, "Read error: %s: %s\n", uv_err_name(r), uv_strerror(r));
