@@ -564,4 +564,4 @@ main(int argc, char* argv[]) {
   return uv_run(loop, UV_RUN_DEFAULT);
 }
 
-/* vim:set et: */
+/* vim:set et ts=2 sw=2 cino=>2: */
