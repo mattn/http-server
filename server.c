@@ -182,7 +182,7 @@ on_fs_open(uv_fs_t* req) {
   response->fd = result;
   response->request = request;
   response->handle = request->handle;
-  response->pbuf = calloc(WRITE_BUF_SIZE, 1);
+  response->pbuf = malloc(WRITE_BUF_SIZE);
   if (response->pbuf == NULL) {
     fprintf(stderr, "Allocate error: %s\n", strerror(r));
     response_error(request->handle, 404, "Not Found\n", NULL);
