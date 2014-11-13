@@ -29,6 +29,7 @@
 #include <limits.h>
 #include <inttypes.h>
 #include "server.h"
+#include "khash.h"
 
 #define ASSERT(expr)                                      \
  do {                                                     \

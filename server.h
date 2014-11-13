@@ -25,11 +25,6 @@
 
 #include <uv.h>
 #include "picohttpparser.h"
-#include "khash.h"
-
-#define REQUEST_BUF(x) \
-  const char* x ## _ptr; \
-  size_t x ## _len;
 
 typedef struct _http_request {
   uv_handle_t* handle;
@@ -44,13 +39,10 @@ typedef struct _http_request {
   size_t last_len;
   const char* payload;
   size_t payload_len;
+  int keep_alive;
 
   char file_path[PATH_MAX];
-
-  int keep_alive;
 } http_request;
-
-#undef REQUEST_BUF
 
 typedef struct {
   int fd;
