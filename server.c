@@ -59,6 +59,7 @@
 
 static uv_loop_t* loop;
 static char* static_dir = "./public";
+static int static_dir_len = -1;
 
 KHASH_MAP_INIT_STR(mime_type, const char*)
 static khash_t(mime_type)* mime_type;
@@ -159,7 +160,7 @@ on_fs_open(uv_fs_t* req) {
   uint64_t response_size = stat_req.statbuf.st_size;
   uv_fs_req_cleanup(&stat_req);
 
-  const char* ctype = "application/octet-stream";
+  const static char* ctype = "application/octet-stream";
   const char* dot = request->file_path;
   const char* ptr = dot;
   while (dot) {
@@ -267,10 +268,12 @@ find_header_value(http_request* request, const char* name, const char* value) {
 
 static void
 request_complete(http_request* request) {
-  snprintf(request->file_path, sizeof(request->file_path), "%s%.*s", static_dir, (int) request->path_len, request->path);
+  memcpy(request->file_path, static_dir, static_dir_len);
+  memcpy(request->file_path + static_dir_len, request->path, request->path_len);
   if (*(request->path + request->path_len - 1) == '/') {
-    strcat(request->file_path, "index.html");
-  }
+    memcpy(request->file_path + static_dir_len + 1, "index.html", 11);
+  } else
+    request->file_path[static_dir_len + request->path_len] = 0;
   request->keep_alive = find_header_value(request, "Connection", "keep-alive");
 
   uv_fs_t* open_req = malloc(sizeof(uv_fs_t));
@@ -508,6 +511,7 @@ main(int argc, char* argv[]) {
     } else
       usage(argv[0]);
   }
+  static_dir_len = strlen(static_dir);
 
   struct sockaddr_in addr;
   int r;
