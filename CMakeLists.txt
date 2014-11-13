@@ -4,8 +4,9 @@ include(ExternalProject)
 include(CheckLibraryExists)
 
 INCLUDE_DIRECTORIES(
-    deps/picohttpparser
-    deps/libuv
+	deps/picohttpparser
+	deps/libuv
+	deps/klib
 )
 
 if (CMAKE_COMPILER_IS_GNUCC)
