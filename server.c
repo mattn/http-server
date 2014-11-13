@@ -462,9 +462,9 @@ on_connection(uv_stream_t* server, int status) {
 static void
 usage(const char* app) {
   fprintf(stderr, "usage: %s [OPTIONS]\n", app);
-  fprintf(stderr, "    -a ADDR: address\n");
-  fprintf(stderr, "    -p PORT: port number\n");
-  fprintf(stderr, "    -d DIR:  root directory\n");
+  fprintf(stderr, "    -a ADDR: address (default: 0.0.0.0)\n");
+  fprintf(stderr, "    -p PORT: port number (default: 7000)\n");
+  fprintf(stderr, "    -d DIR:  root directory (default: public)\n");
   exit(1);
 }
 
