@@ -443,6 +443,12 @@ on_connection(uv_stream_t* server, int status) {
     return;
   }
 
+  r = uv_tcp_simultaneous_accepts((uv_tcp_t*) stream, 1);
+  if (r) {
+    fprintf(stderr, "Flag error: %s: %s\n", uv_err_name(r), uv_strerror(r));
+    return;
+  }
+
   r = uv_accept(server, stream);
   if (r) {
     fprintf(stderr, "Accept error: %s: %s\n", uv_err_name(r), uv_strerror(r));
@@ -450,12 +456,6 @@ on_connection(uv_stream_t* server, int status) {
   }
 
   r = uv_tcp_nodelay((uv_tcp_t*) stream, 1);
-  if (r) {
-    fprintf(stderr, "Flag error: %s: %s\n", uv_err_name(r), uv_strerror(r));
-    return;
-  }
-
-  r = uv_tcp_simultaneous_accepts((uv_tcp_t*) stream, 1);
   if (r) {
     fprintf(stderr, "Flag error: %s: %s\n", uv_err_name(r), uv_strerror(r));
     return;
