@@ -20,7 +20,7 @@ include_directories(include deps/picohttpparser deps/libuv/include)
 
 add_executable(http-server server.c deps/picohttpparser/picohttpparser.c)
 if(WIN32)
-	target_link_libraries(http-server libuv.a)
+	target_link_libraries(http-server ${CMAKE_CURRENT_SOURCE_DIR}\\deps\\libuv\\libuv.a)
 	target_link_libraries(http-server ws2_32 psapi iphlpapi)
 else()
 	target_link_libraries(http-server libuv.a)
