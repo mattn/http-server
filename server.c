@@ -503,7 +503,7 @@ main(int argc, char* argv[]) {
       if (i == argc-1) usage(argv[0]);
       char* e = NULL;
       port = strtol(argv[++i], &e, 10);
-      if ((e && *e) || port < 0 || port > 32767) usage(argv[0]);
+      if ((e && *e) || port < 0 || port > 65535) usage(argv[0]);
     } else
     if (!strcmp(argv[i], "-d")) {
       if (i == argc-1) usage(argv[0]);
