@@ -1,6 +1,6 @@
 [submodule "deps/libuv"]
 	path = deps/libuv
-	url = https://github.com/joyent/libuv
+	url = https://github.com/libuv/libuv
 [submodule "deps/picohttpparser"]
 	path = deps/picohttpparser
 	url = https://github.com/h2o/picohttpparser
