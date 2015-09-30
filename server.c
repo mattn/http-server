@@ -296,16 +296,14 @@ on_read(uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf) {
   if (nread < 0) {
     if (buf->base)
       free(buf->base);
-    /* FIXME
+    /*
     uv_shutdown_t* shutdown_req = (uv_shutdown_t*) malloc(sizeof(uv_shutdown_t));
     if (shutdown_req == NULL) {
       fprintf(stderr, "Allocate error\n");
-      uv_close((uv_handle_t*) stream, on_close);
       return;
     }
     uv_shutdown(shutdown_req, stream, on_shutdown);
     */
-    uv_close((uv_handle_t*) stream, on_close);
     return;
   }
 
