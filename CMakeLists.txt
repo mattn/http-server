@@ -38,7 +38,7 @@ else()
 		OUTPUT ${LIBUV_LIBRARIES}
 		WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/deps/libuv
 		COMMAND sh
-		ARGS -c '[ ! -f .libs/libuv.a ] && (./autogen.sh && ./configure --enable-static --disable-shared) || make'
+		ARGS -c '[ ! -f .libs/libuv.a ] && (./autogen.sh && ./configure --enable-static --disable-shared && make -k libuv.la)'
 		)
 	add_custom_target(libuv DEPENDS ${LIBUV_LIBRARIES})
 	add_dependencies(http-server libuv)
