@@ -405,9 +405,6 @@ on_fs_read(uv_fs_t *req) {
     response_error(response->handle, 500, "Internal Server Error", NULL);
     destroy_response(response, 1);
     return;
-  } else if (result == 0) {
-    destroy_response(response, 1);
-    return;
   }
 
   uv_buf_t buf = uv_buf_init(response->pbuf, result);
