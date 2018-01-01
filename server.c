@@ -143,7 +143,7 @@ on_fs_open(uv_fs_t* req) {
   free(req);
   if (result < 0) {
     fprintf(stderr, "Open error: %s: %s\n", uv_err_name(result), uv_strerror(result));
-    response_error(request->handle, 404, "Not Found\n", NULL);
+    response_error(request->handle, 404, "Not Found", NULL);
     destroy_request(request, 1);
     return;
   }
@@ -152,7 +152,7 @@ on_fs_open(uv_fs_t* req) {
   int r = uv_fs_fstat(loop, &stat_req, result, NULL);
   if (r) {
     fprintf(stderr, "Stat error: %s: %s\n", uv_err_name(r), uv_strerror(r));
-    response_error(request->handle, 404, "Not Found\n", NULL);
+    response_error(request->handle, 404, "Not Found", NULL);
     destroy_request(request, 1);
     return;
   }
@@ -175,7 +175,7 @@ on_fs_open(uv_fs_t* req) {
   http_response* response = calloc(1, sizeof(http_response));
   if (response == NULL) {
     fprintf(stderr, "Allocate error: %s\n", strerror(r));
-    response_error(request->handle, 404, "Not Found\n", NULL);
+    response_error(request->handle, 404, "Not Found", NULL);
     destroy_request(request, 1);
     return;
   }
@@ -186,7 +186,7 @@ on_fs_open(uv_fs_t* req) {
   response->pbuf = malloc(WRITE_BUF_SIZE);
   if (response->pbuf == NULL) {
     fprintf(stderr, "Allocate error: %s\n", strerror(r));
-    response_error(request->handle, 404, "Not Found\n", NULL);
+    response_error(request->handle, 404, "Not Found", NULL);
     destroy_response(response, 1);
     return;
   }
@@ -285,7 +285,7 @@ request_complete(http_request* request) {
   int r = uv_fs_open(loop, open_req, request->file_path, O_RDONLY, S_IREAD, on_fs_open);
   if (r) {
     fprintf(stderr, "Open error: %s: %s\n", uv_err_name(r), uv_strerror(r));
-    response_error(request->handle, 404, "Not Found\n", NULL);
+    response_error(request->handle, 404, "Not Found", NULL);
     destroy_request(request, 1);
     free(open_req);
   }
