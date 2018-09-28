@@ -518,6 +518,7 @@ main(int argc, char* argv[]) {
   add_mime_type(".html", "text/html");
   add_mime_type(".css", "text/css");
   add_mime_type(".txt", "text/plain");
+  add_mime_type(".js", "text/javascript");
 
   r = uv_ip4_addr(ipaddr, port, &addr);
   if (r) {
