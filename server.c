@@ -142,7 +142,7 @@ on_fs_open(uv_fs_t* req) {
   uv_fs_req_cleanup(req);
   free(req);
   if (result < 0) {
-    fprintf(stderr, "Open error: %s: %s\n", uv_err_name(result), uv_strerror(result));
+    fprintf(stderr, "Open error: %s: %s: %s\n", request->file_path, uv_err_name(result), uv_strerror(result));
     response_error(request->handle, 404, "Not Found", NULL);
     destroy_request(request, 1);
     return;
@@ -151,7 +151,7 @@ on_fs_open(uv_fs_t* req) {
   uv_fs_t stat_req;
   int r = uv_fs_fstat(loop, &stat_req, result, NULL);
   if (r) {
-    fprintf(stderr, "Stat error: %s: %s\n", uv_err_name(r), uv_strerror(r));
+    fprintf(stderr, "Stat error: %s: %s: %s\n", request->file_path, uv_err_name(r), uv_strerror(r));
     response_error(request->handle, 404, "Not Found", NULL);
     destroy_request(request, 1);
     return;
@@ -271,7 +271,7 @@ request_complete(http_request* request) {
   memcpy(request->file_path, static_dir, static_dir_len);
   memcpy(request->file_path + static_dir_len, request->path, request->path_len);
   if (*(request->path + request->path_len - 1) == '/') {
-    memcpy(request->file_path + static_dir_len + 1, "index.html", 11);
+    memcpy(request->file_path + static_dir_len + request->path_len, "index.html", 11);
   } else
     request->file_path[static_dir_len + request->path_len] = 0;
   request->keep_alive = find_header_value(request, "Connection", "keep-alive");
@@ -284,7 +284,7 @@ request_complete(http_request* request) {
   open_req->data = request;
   int r = uv_fs_open(loop, open_req, request->file_path, O_RDONLY, S_IREAD, on_fs_open);
   if (r) {
-    fprintf(stderr, "Open error: %s: %s\n", uv_err_name(r), uv_strerror(r));
+    fprintf(stderr, "Open error: %s: %s: %s\n", request->file_path, uv_err_name(r), uv_strerror(r));
     response_error(request->handle, 404, "Not Found", NULL);
     destroy_request(request, 1);
     free(open_req);
@@ -516,6 +516,7 @@ main(int argc, char* argv[]) {
   add_mime_type(".png", "image/png");
   add_mime_type(".gif", "image/gif");
   add_mime_type(".html", "text/html");
+  add_mime_type(".css", "text/css");
   add_mime_type(".txt", "text/plain");
 
   r = uv_ip4_addr(ipaddr, port, &addr);
@@ -563,6 +564,15 @@ main(int argc, char* argv[]) {
   r = uv_signal_start(&sig, on_signal, SIGINT);
   if (r) {
     fprintf(stderr, "Signal error: %s: %s\n", uv_err_name(r), uv_strerror(r));
+    return 1;
+  }
+
+  struct sigaction act;
+  memset(&act, 0, sizeof(act));
+  act.sa_handler = SIG_IGN;
+  act.sa_flags = SA_RESTART;
+  if (sigaction(SIGPIPE, &act, NULL)) {
+    fprintf(stderr, "cannot ignore SIGPIPE\n");
     return 1;
   }
 
