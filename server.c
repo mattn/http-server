@@ -92,6 +92,33 @@ static void on_alloc(uv_handle_t*, size_t, uv_buf_t*);
 static void on_fs_read(uv_fs_t*);
 static void response_error(uv_handle_t*, int, const char*, const char*);
 
+inline int ishex(int x)
+{
+  return (x >= '0' && x <= '9')	||
+    (x >= 'a' && x <= 'f')	||
+    (x >= 'A' && x <= 'F');
+}
+
+int decode(const char *s, const int s_len, char *dec)
+{
+  char *o;
+  const char *end = s + s_len - 1;
+  int c;
+
+  for (o = dec; s <= end; o++) {
+    c = *s++;
+    if (c == '+') c = ' ';
+    else if (c == '%' && (!ishex(*s++) ||
+             !ishex(*s++) ||
+             !sscanf(s - 2, "%2x", &c)))
+      return -1;
+
+    if (dec) *o = c;
+  }
+
+  return o - dec;
+}
+
 static void
 destroy_request(http_request* request, int close_handle) {
   if (close_handle && request->handle) {
@@ -268,12 +295,17 @@ find_header_value(http_request* request, const char* name, const char* value) {
 
 static void
 request_complete(http_request* request) {
+  int path_len;
   memcpy(request->file_path, static_dir, static_dir_len);
-  memcpy(request->file_path + static_dir_len, request->path, request->path_len);
-  if (*(request->path + request->path_len - 1) == '/') {
-    memcpy(request->file_path + static_dir_len + request->path_len, "index.html", 11);
+  path_len = decode(request->path, request->path_len, request->file_path + static_dir_len);
+  if(path_len < 0){
+    fprintf(stderr, "Url encode error: %s\n", request->path);
+    return;
+  }
+  if (*(request->file_path + static_dir_len + path_len - 1) == '/') {
+    memcpy(request->file_path + static_dir_len + path_len, "index.html", 11);
   } else
-    request->file_path[static_dir_len + request->path_len] = 0;
+    request->file_path[static_dir_len + path_len] = 0;
   request->keep_alive = find_header_value(request, "Connection", "keep-alive");
 
   uv_fs_t* open_req = malloc(sizeof(uv_fs_t));
