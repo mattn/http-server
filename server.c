@@ -568,6 +568,7 @@ main(int argc, char* argv[]) {
     return 1;
   }
 
+#ifdef SIGPIPE
   struct sigaction act;
   memset(&act, 0, sizeof(act));
   act.sa_handler = SIG_IGN;
@@ -576,6 +577,7 @@ main(int argc, char* argv[]) {
     fprintf(stderr, "cannot ignore SIGPIPE\n");
     return 1;
   }
+#endif
 
   return uv_run(loop, UV_RUN_DEFAULT);
 }
