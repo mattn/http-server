@@ -20,12 +20,12 @@
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
  * OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-#include <uv.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <sys/stat.h>
 #include <limits.h>
 #include <inttypes.h>
 #include "server.h"
@@ -56,6 +56,16 @@
   } while (0)
 
 #define WRITE_BUF_SIZE (8192/4)
+
+#ifndef S_IREAD
+#define S_IREAD _S_IREAD
+#endif
+
+#ifdef _WIN32
+# define INVALID_FD (INVALID_HANDLE_VALUE)
+#else
+# define INVALID_FD (-1)
+#endif
 
 static uv_loop_t* loop;
 static char* static_dir = "./public";
@@ -104,7 +114,7 @@ static void
 destroy_response(http_response* response, int close_handle) {
   if (response->pbuf) free(response->pbuf);
   if (response->request) destroy_request(response->request, close_handle);
-  if (response->fd != -1) {
+  if (response->fd != INVALID_FD) {
     uv_fs_t close_req;
     uv_fs_close(loop, &close_req, response->fd, NULL);
   }
@@ -137,7 +147,7 @@ on_write(uv_write_t* req, int status) {
 static void
 on_fs_open(uv_fs_t* req) {
   http_request* request = (http_request*) req->data;
-  int result = req->result;
+  int result = (int) req->result;
 
   uv_fs_req_cleanup(req);
   free(req);
@@ -149,7 +159,7 @@ on_fs_open(uv_fs_t* req) {
   }
 
   uv_fs_t stat_req;
-  int r = uv_fs_fstat(loop, &stat_req, result, NULL);
+  int r = uv_fs_fstat(loop, &stat_req, (int) req->result, NULL);
   if (r) {
     fprintf(stderr, "Stat error: %s: %s: %s\n", request->file_path, uv_err_name(r), uv_strerror(r));
     response_error(request->handle, 404, "Not Found", NULL);

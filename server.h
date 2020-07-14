@@ -23,7 +23,7 @@
 #ifndef _SERVER_H_
 #define _SERVER_H_
 
-#include <uv.h>
+#include "uv.h"
 #include "picohttpparser.h"
 
 typedef struct _http_request {
@@ -45,7 +45,7 @@ typedef struct _http_request {
 } http_request;
 
 typedef struct {
-  int fd;
+  uv_os_fd_t fd;
   uv_write_t write_req;
   uv_fs_t read_req;
   char* pbuf;
