@@ -21,18 +21,18 @@ endif()
 add_executable(http-server server.c deps/picohttpparser/picohttpparser.c)
 
 if(WIN32)
-    set(LIBUV_LIBRARIES ${CMAKE_CURRENT_SOURCE_DIR}/deps/libuv/libuv.a)
+    set(LIBUV_LIBRARIES ${CMAKE_CURRENT_SOURCE_DIR}/deps/libuv/build/libuv_a.a)
 	add_custom_command(
 		OUTPUT ${LIBUV_LIBRARIES}
 		WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}\\deps\\libuv
-		COMMAND mingw32-make
-		ARGS -f Makefile.mingw CC=gcc
+		COMMAND cmd
+        /c "if not exist build mkdir build && cd build && cmake .. && mingw32-make uv_a"
 		)
 	add_custom_target(libuv DEPENDS ${LIBUV_LIBRARIES})
 	add_dependencies(http-server libuv)
 	link_directories(${CMAKE_CURRENT_SOURCE_DIR}\\deps\\libuv)
 	target_link_libraries(http-server ${LIBUV_LIBRARIES})
-	target_link_libraries(http-server ws2_32 userenv psapi iphlpapi)
+    target_link_libraries(http-server ws2_32 userenv psapi iphlpapi secur32)
 else()
     set(LIBUV_LIBRARIES ${CMAKE_CURRENT_SOURCE_DIR}/deps/libuv/.libs/libuv.a)
 	add_custom_command(
