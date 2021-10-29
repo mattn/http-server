@@ -116,7 +116,7 @@ destroy_response(http_response* response, int close_handle) {
   if (response->request) destroy_request(response->request, close_handle);
   if (response->fd != INVALID_FD) {
     uv_fs_t close_req;
-    uv_fs_close(loop, &close_req, response->fd, NULL);
+    uv_fs_close(loop, &close_req, (uv_file) response->fd, NULL);
   }
   free(response);
 }
