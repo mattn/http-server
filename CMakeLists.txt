@@ -25,14 +25,14 @@ add_custom_target(libuv DEPENDS ${LIBUV_LIBRARIES})
 add_custom_command(
     OUTPUT ${LIBUV_LIBRARIES}
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/deps/libuv
-    COMMAND sh
-    ARGS -c 'cmake -B build && cmake --build build -t uv_a'
+    COMMAND ${CMAKE_COMMAND} -G "${CMAKE_GENERATOR}" -B build
+    COMMAND ${CMAKE_COMMAND} --build build -t uv_a
     )
 add_dependencies(http-server libuv)
 link_directories(${CMAKE_CURRENT_SOURCE_DIR}/deps/libuv)
 target_link_libraries(http-server ${LIBUV_LIBRARIES})
 if(WIN32)
-    target_link_libraries(http-server ws2_32 userenv psapi iphlpapi secur32)
+    target_link_libraries(http-server ws2_32 userenv psapi dbghelp iphlpapi secur32)
 else()
 	target_link_libraries(http-server pthread rt)
 endif()
