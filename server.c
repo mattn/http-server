@@ -114,7 +114,7 @@ static void
 destroy_response(http_response* response, int close_handle) {
   if (response->pbuf) free(response->pbuf);
   if (response->request) destroy_request(response->request, close_handle);
-  if (response->fd != INVALID_FD) {
+  if (response->fd != -1) {
     uv_fs_t close_req;
     uv_fs_close(loop, &close_req, (uv_file) response->fd, NULL);
   }
@@ -136,7 +136,7 @@ on_write(uv_write_t* req, int status) {
     return;
   }
 
-  int r = uv_fs_read(loop, &response->read_req, response->fd, &response->buf, 1, response->response_offset, on_fs_read);
+  int r = uv_fs_read(loop, &response->read_req, (uv_file) response->fd, &response->buf, 1, response->response_offset, on_fs_read);
   if (r) {
     fprintf(stderr, "File read error: %s: %s\n", uv_err_name(r), uv_strerror(r));
     response_error(response->handle, 500, "Internal Server Error", NULL);
@@ -159,7 +159,7 @@ on_fs_open(uv_fs_t* req) {
   }
 
   uv_fs_t stat_req;
-  int r = uv_fs_fstat(loop, &stat_req, (uv_os_fd_t) result, NULL);
+  int r = uv_fs_fstat(loop, &stat_req, result, NULL);
   if (r < 0) {
     fprintf(stderr, "Stat error: %s: %s: %s\n", request->file_path, uv_err_name(r), uv_strerror(r));
     response_error(request->handle, 404, "Not Found", NULL);
@@ -190,7 +190,7 @@ on_fs_open(uv_fs_t* req) {
     return;
   }
   response->response_size = response_size;
-  response->fd = (uv_os_fd_t) result;
+  response->fd = result;
   response->request = request;
   response->handle = request->handle;
   response->pbuf = malloc(WRITE_BUF_SIZE);
@@ -233,7 +233,7 @@ on_fs_open(uv_fs_t* req) {
   }
 #endif
 
-  r = uv_fs_read(loop, &response->read_req, (uv_os_fd_t) result, &response->buf, 1, -1, on_fs_read);
+  r = uv_fs_read(loop, &response->read_req, result, &response->buf, 1, -1, on_fs_read);
   if (r) {
     response_error(request->handle, 500, "Internal Server Error\n", NULL);
     destroy_response(response, 1);
