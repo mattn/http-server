@@ -94,7 +94,7 @@ btime(int f) {
 #endif
 
 static void on_write(uv_write_t*, int);
-static void on_write_error(uv_write_t*, int);
+static void on_write_error_free_buf(uv_write_t*, int);
 static void on_read(uv_stream_t*, ssize_t, const uv_buf_t*);
 static void on_close(uv_handle_t*);
 static void on_connection(uv_stream_t*, int);
@@ -140,7 +140,8 @@ on_write(uv_write_t* req, int status) {
   if (r) {
     fprintf(stderr, "File read error: %s: %s\n", uv_err_name(r), uv_strerror(r));
     response_error(response->handle, 500, "Internal Server Error", NULL);
-    destroy_request(response->request, 1);
+    response->request = NULL;
+    destroy_response(response, 0);
   }
 }
 
@@ -235,7 +236,7 @@ on_fs_open(uv_fs_t* req) {
 
   r = uv_fs_read(loop, &response->read_req, result, &response->buf, 1, -1, on_fs_read);
   if (r) {
-    response_error(request->handle, 500, "Internal Server Error\n", NULL);
+    response_error(request->handle, 500, "Internal Server Error", NULL);
     destroy_response(response, 1);
   }
 }
@@ -254,7 +255,10 @@ content_length(http_request* request) {
   char buf[16];
   for (i = 0; i < request->num_headers; i++)
     if (!strncasecmp(request->headers[i].name, "content-length", request->headers[i].name_len)) {
-      strncpy(buf, request->headers[i].value, request->headers[i].value_len);
+      size_t len = request->headers[i].value_len;
+      if (len >= sizeof(buf)) len = sizeof(buf) - 1;
+      memcpy(buf, request->headers[i].value, len);
+      buf[len] = '\0';
       return atol(buf);
     }
   return -1;
@@ -336,7 +340,7 @@ on_read(uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf) {
   request->num_headers = sizeof(request->headers) / sizeof(request->headers[0]);
   int nparsed = phr_parse_request(
           buf->base,
-          buf->len,
+          nread,
           &request->method,
           &request->method_len,
           &request->path,
@@ -378,15 +382,20 @@ on_alloc(uv_handle_t* handle, size_t suggested_size, uv_buf_t* buf) {
 }
 
 static void
-on_write_error(uv_write_t* req, int status) {
+on_write_error_free_buf(uv_write_t* req, int status) {
+  free(req->data);
   free(req);
 }
 
 static void
 response_error(uv_handle_t* handle, int status_code, const char* status, const char* message) {
-  char bufline[1024];
   const char* ptr = message ? message : status;
-  int nbuf = sprintf(bufline,
+  char* bufline = malloc(1024);
+  if (bufline == NULL) {
+    fprintf(stderr, "Allocate error: %s\n", strerror(errno));
+    return;
+  }
+  int nbuf = snprintf(bufline, 1024,
       "HTTP/1.0 %d %s\r\n"
       "Content-Length: %d\r\n"
       "Content-Type: text/plain; charset=UTF-8;\r\n"
@@ -395,12 +404,16 @@ response_error(uv_handle_t* handle, int status_code, const char* status, const c
   uv_write_t* write_req = malloc(sizeof(uv_write_t));
   if (write_req == NULL) {
     fprintf(stderr, "Allocate error: %s\n", strerror(errno));
+    free(bufline);
     return;
   }
+  write_req->data = bufline;
   uv_buf_t buf = uv_buf_init(bufline, nbuf);
-  int r = uv_write(write_req, (uv_stream_t*) handle, &buf, 1, on_write_error);
+  int r = uv_write(write_req, (uv_stream_t*) handle, &buf, 1, on_write_error_free_buf);
   if (r) {
     fprintf(stderr, "Write error %s: %s\n", uv_err_name(r), uv_strerror(r));
+    free(bufline);
+    free(write_req);
   }
 }
 
