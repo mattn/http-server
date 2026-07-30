@@ -3,8 +3,13 @@ project(http-server)
 include(ExternalProject)
 include(CheckLibraryExists)
 
-if (CMAKE_COMPILER_IS_GNUCC)
-	set(CMAKE_C_FLAGS "-O2 -g -Wall -Wno-unused-function ${CMAKE_C_FLAGS}")
+if (NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+endif()
+
+if (CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+	set(CMAKE_C_FLAGS_RELEASE "-O3 -DNDEBUG -Wall -Wextra -Wno-unused-function ${CMAKE_C_FLAGS_RELEASE}")
+	set(CMAKE_C_FLAGS_RELWITHDEBINFO "-O3 -g -DNDEBUG -Wall -Wextra -Wno-unused-function ${CMAKE_C_FLAGS_RELWITHDEBINFO}")
 endif()
 
 include_directories(
@@ -14,8 +19,8 @@ include_directories(
 	${PROJECT_SOURCE_DIR}/deps/klib
 )
 
-if (CMAKE_COMPILER_IS_GNUCC)
-    set(CMAKE_C_FLAGS "${CMAKE_CXX_FLAGS} -iquote ${PROJECT_SOURCE_DIR}/deps/libuv/include")
+if (CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -iquote ${PROJECT_SOURCE_DIR}/deps/libuv/include")
 endif()
 
 add_executable(http-server server.c deps/picohttpparser/picohttpparser.c)
