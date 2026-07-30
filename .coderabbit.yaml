@@ -1,0 +1,86 @@
+# yaml-language-server: $schema=https://storage.googleapis.com/coderabbit_public_assets/schema.v2.json
+language: en-US
+
+reviews:
+  # This is a C server where the defects that matter are subtle, so err
+  # towards reporting rather than staying quiet.
+  profile: assertive
+  poem: false
+  sequence_diagrams: false
+  # Never gate a merge on the bot; CI is the gate.
+  request_changes_workflow: false
+
+  auto_review:
+    enabled: true
+    drafts: false
+
+  path_instructions:
+    - path: "server.c"
+      instructions: |
+        This is a single-threaded libuv HTTP server. Weight the review towards
+        the failure modes this code has actually shipped:
+
+        Connection ownership. A connection is a malloc'd uv_tcp_t freed by
+        on_close(). `stream->data` is the invariant: it points at the
+        http_request currently in flight and is NULL when the connection is
+        unowned. Only the owner may close the connection, and every close must
+        go through close_connection(), which skips a handle that is already
+        closing. Flag any new uv_close() call, any path that frees or closes a
+        connection while a response could still reference it, and any path that
+        leaves a connection with no owner and no close.
+
+        Buffer lifetime across callbacks. uv_write() does not copy; a buffer
+        handed to it must outlive the write and therefore cannot live on the
+        callback's stack. A uv_write_t must not be submitted again while it is
+        still queued. request->path, request->method, request->headers and
+        request->payload all point into the read buffer, which on_read() frees
+        before the response is built, so none of them may be read from
+        on_fs_open() or later.
+
+        Path resolution. build_file_path() is security-critical. It resolves
+        the request target one segment at a time into request->file_path
+        (char[PATH_MAX]), decodes percent escapes before the "." and ".."
+        checks, refuses an escaped separator or NUL, and bounds every single
+        write against the space left in the buffer. Reject changes that decode
+        without normalising afterwards, that normalise before decoding, that
+        compute a length once instead of checking per write, that truncate a
+        too-long path instead of refusing it, or that let ".." reach the root.
+        Two CVE-class bugs came from exactly this function.
+
+        Error paths. Check that every uv_* and allocation return value is
+        checked, that a descriptor from uv_fs_open is closed on every path,
+        that uv_fs_req_cleanup is called on every uv_fs_t, and that no code
+        writes a second status line after response headers have gone out.
+
+    - path: "test/*.py"
+      instructions: |
+        These are the CI tests. A test is only useful here if it fails on the
+        unfixed code, so flag a new check that would pass either way. Prefer
+        assertions on observable HTTP behaviour, descriptor counts and
+        sanitizer output over assertions on internals.
+
+    - path: ".github/workflows/*.yml"
+      instructions: |
+        CI must keep building with sanitizers and running both test/smoke.py
+        and test/fuzz.py. Flag anything that weakens that, in particular
+        setting ASAN_OPTIONS=detect_leaks=0, dropping -fsanitize, or making a
+        failing check non-blocking.
+
+  tools:
+    clang:
+      enabled: true
+    cppcheck:
+      enabled: true
+    semgrep:
+      enabled: true
+    gitleaks:
+      enabled: true
+    actionlint:
+      enabled: true
+    yamllint:
+      enabled: true
+    ruff:
+      enabled: true
+
+chat:
+  auto_reply: true
