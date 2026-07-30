@@ -35,9 +35,9 @@ def free_port():
     return port
 
 
-def request(port, target, connection=b"close", read_all=True):
+def request(port, target, method=b"GET", connection=b"close", read_all=True):
     """Send one request, return the whole response (headers and body)."""
-    req = (b"GET " + target + b" HTTP/1.1\r\nHost: localhost\r\n"
+    req = (method + b" " + target + b" HTTP/1.1\r\nHost: localhost\r\n"
            b"Connection: " + connection + b"\r\n\r\n")
     s = socket.socket()
     s.settimeout(5)
@@ -62,8 +62,8 @@ def content_type(port, target):
     return "<none>"
 
 
-def status(port, target):
-    data = request(port, target)
+def status(port, target, method=b"GET"):
+    data = request(port, target, method)
     if not data:
         return "<empty>"
     return data.split(b"\r\n", 1)[0].decode("latin-1")
@@ -162,6 +162,32 @@ def main():
                             (b"/%2fetc/passwd", "encoded separator"),
                             (b"/%2Fetc/passwd", "encoded separator, upper case")):
             check(f"{why} is 400", status(port, target).startswith("HTTP/1.0 400"), True)
+
+        print("methods")
+        s = socket.socket()
+        s.settimeout(2)
+        s.connect(("127.0.0.1", port))
+        s.sendall(b"HEAD /index.html HTTP/1.1\r\nHost: x\r\nConnection: keep-alive\r\n\r\n")
+        time.sleep(0.2)
+        s.sendall(b"GET /index.html HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
+        data = b""
+        for _ in range(8):
+            try:
+                chunk = s.recv(65536)
+            except socket.timeout:
+                break
+            if not chunk:
+                break
+            data += chunk
+        s.close()
+        # A body on the HEAD response desynchronizes a persistent connection:
+        # the client reads it as the start of the next response.
+        check("HEAD then GET yields two responses", data.count(b"HTTP/1."), 2)
+        check("HEAD sends no body",
+              data.split(b"\r\n\r\n")[1].startswith(b"HTTP/1."), True)
+        for method in (b"POST", b"DELETE", b"FROB"):
+            check(f"{method.decode()} is 501",
+                  status(port, b"/index.html", method).startswith("HTTP/1.0 501"), True)
 
         print("content types")
         check("known extension", content_type(port, b"/a.png"), "image/png")

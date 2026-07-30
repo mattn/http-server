@@ -40,6 +40,9 @@ typedef struct _http_request {
   const char* payload;
   size_t payload_len;
   int keep_alive;
+  /* method points into the read buffer, which is freed before the response is
+   * built, so what it was has to be recorded here. */
+  int head_only;
 
   char file_path[PATH_MAX];
 } http_request;
