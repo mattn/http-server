@@ -47,6 +47,18 @@ typedef struct _http_request {
   char file_path[PATH_MAX];
 } http_request;
 
+/* Per connection state, hung off the handle's data pointer.  A request can
+ * arrive across several reads, so the bytes seen so far are accumulated here;
+ * `request` is the one currently being served, or NULL when the connection is
+ * idle and therefore unowned. */
+typedef struct {
+  char* buf;
+  size_t len;
+  size_t cap;
+  size_t last_len;
+  struct _http_request* request;
+} http_connection;
+
 typedef struct {
   uv_file fd;
   uv_write_t write_req;
