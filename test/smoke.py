@@ -165,12 +165,13 @@ def main():
 
         print("Connection header matching")
 
-        def conn(extra):
+        def conn(extra, version=b"1.1"):
             s = socket.socket()
             s.settimeout(2)
             try:
                 s.connect(("127.0.0.1", port))
-                s.sendall(b"GET /index.html HTTP/1.1\r\nHost: x\r\n" + extra + b"\r\n")
+                s.sendall(b"GET /index.html HTTP/" + version + b"\r\nHost: x\r\n"
+                          + extra + b"\r\n")
                 # Read only the header block: a keep-alive response leaves the
                 # connection open, so reading to EOF would just time out.
                 data = b""
@@ -188,15 +189,80 @@ def main():
                     return line.split(b":", 1)[1].strip().decode("latin-1").lower()
             return "<none>"
 
-        check("Connection: keep-alive", conn(b"Connection: keep-alive\r\n"), "keep-alive")
-        check("Connection: close", conn(b"Connection: close\r\n"), "close")
-        check("mixed case", conn(b"Connection: Keep-Alive\r\n"), "keep-alive")
+        # HTTP/1.1 is persistent by default, HTTP/1.0 is not, so each default is
+        # checked on its own version and matching is checked on the version
+        # where a match flips the answer.
+        check("1.1 with no Connection header", conn(b""), "keep-alive")
+        check("1.0 with no Connection header", conn(b"", b"1.0"), "close")
+
+        # Matching keep-alive is observable on 1.0, where the default is close.
+        check("1.0 keep-alive", conn(b"Connection: keep-alive\r\n", b"1.0"), "keep-alive")
+        check("1.0 keep-alive, mixed case",
+              conn(b"Connection: Keep-Alive\r\n", b"1.0"), "keep-alive")
+        # Connection is a token list, so the token counts among others.
+        check("1.0 keep-alive among other tokens",
+              conn(b"Connection: keep-alive, TE\r\n", b"1.0"), "keep-alive")
+        check("1.0 keep-alive with padding",
+              conn(b"Connection:  TE ,  keep-alive \r\n", b"1.0"), "keep-alive")
         # A received name must match in full, not as a prefix of the one sought.
-        check("one letter header is not Connection", conn(b"C: k\r\n"), "close")
-        check("Conn is not Connection", conn(b"Conn: keep\r\n"), "close")
-        # Connection is a token list, so keep-alive counts among other tokens.
-        check("token among others", conn(b"Connection: keep-alive, TE\r\n"), "keep-alive")
-        check("token with padding", conn(b"Connection:  TE ,  keep-alive \r\n"), "keep-alive")
+        check("1.0 one letter header is not Connection",
+              conn(b"C: k\r\n", b"1.0"), "close")
+        check("1.0 Conn is not Connection",
+              conn(b"Conn: keep\r\n", b"1.0"), "close")
+
+        # Matching close is observable on 1.1, where the default is keep-alive.
+        check("1.1 asked to close", conn(b"Connection: close\r\n"), "close")
+        check("1.1 close among other tokens",
+              conn(b"Connection: TE, close\r\n"), "close")
+        check("1.1 two letter header is not Connection",
+              conn(b"Cl: c\r\n"), "keep-alive")
+
+        # close overrides the version default, so it wins over a keep-alive
+        # token in the same field or in a second Connection field.
+        check("1.0 close overrides keep-alive",
+              conn(b"Connection: keep-alive, close\r\n", b"1.0"), "close")
+        check("1.0 close before keep-alive",
+              conn(b"Connection: close, keep-alive\r\n", b"1.0"), "close")
+        check("1.0 close in a second Connection field",
+              conn(b"Connection: keep-alive\r\nConnection: close\r\n", b"1.0"), "close")
+        check("1.1 close overrides keep-alive",
+              conn(b"Connection: keep-alive, close\r\n"), "close")
+
+        def reuses(extra, version=b"1.1"):
+            """Whether a second request on the same socket is answered."""
+            s = socket.socket()
+            s.settimeout(2)
+            try:
+                s.connect(("127.0.0.1", port))
+                for _ in range(2):
+                    s.sendall(b"GET /index.html HTTP/" + version + b"\r\nHost: x\r\n"
+                              + extra + b"\r\n")
+                    data = b""
+                    while b"\r\n\r\n" not in data:
+                        chunk = s.recv(65536)
+                        if not chunk:
+                            return False
+                        data += chunk
+                    head, rest = data.split(b"\r\n\r\n", 1)
+                    length = 0
+                    for line in head.split(b"\r\n"):
+                        if line.lower().startswith(b"content-length:"):
+                            length = int(line.split(b":", 1)[1])
+                    while len(rest) < length:
+                        chunk = s.recv(65536)
+                        if not chunk:
+                            return False
+                        rest += chunk
+                return True
+            except OSError:
+                return False
+            finally:
+                s.close()
+
+        # The header is only a claim; check the socket is really reusable.
+        check("1.1 socket is reused with no Connection header", reuses(b""), True)
+        check("1.1 socket is closed when asked", reuses(b"Connection: close\r\n"), False)
+        check("1.0 socket is closed by default", reuses(b"", b"1.0"), False)
 
         print("methods")
         s = socket.socket()
