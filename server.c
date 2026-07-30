@@ -305,6 +305,12 @@ on_write_header(uv_write_t* req, int status) {
     return;
   }
 
+  /* A HEAD response is the header and nothing else. */
+  if (response->request->head_only) {
+    destroy_response(response, !response->request->keep_alive);
+    return;
+  }
+
   int r = uv_fs_read(loop, &response->read_req, response->fd, &response->buf, 1, -1, on_fs_read);
   if (r) {
     fprintf(stderr, "File read error: %s: %s\n", uv_err_name(r), uv_strerror(r));
@@ -457,6 +463,7 @@ respond_status(http_request* request, int status_code) {
   case 400: status = "Bad Request"; break;
   case 414: status = "URI Too Long"; break;
   case 500: status = "Internal Server Error"; break;
+  case 501: status = "Not Implemented"; break;
   default:
     status_code = 404;
     status = "Not Found";
@@ -468,7 +475,18 @@ respond_status(http_request* request, int status_code) {
 
 static void
 request_complete(http_request* request) {
-  int status = build_file_path(request);
+  int status;
+
+  if (request->method_len == 3 && !memcmp(request->method, "GET", 3))
+    request->head_only = 0;
+  else if (request->method_len == 4 && !memcmp(request->method, "HEAD", 4))
+    request->head_only = 1;
+  else {
+    respond_status(request, 501);
+    return;
+  }
+
+  status = build_file_path(request);
   if (status) {
     respond_status(request, status);
     return;
