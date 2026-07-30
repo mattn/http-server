@@ -179,8 +179,10 @@ on_write(uv_write_t* req, int status) {
   if (r) {
     fprintf(stderr, "File read error: %s: %s\n", uv_err_name(r), uv_strerror(r));
     response_error(response->handle, 500, "Internal Server Error", NULL);
-    response->request = NULL;
-    destroy_response(response, 0);
+    /* The transfer is over, so the request goes with the response and the
+     * connection is closed; nulling it out here leaked the request and left
+     * the connection open with nothing left to serve it. */
+    destroy_response(response, 1);
   }
 }
 
@@ -774,23 +776,25 @@ on_connection(uv_stream_t* server, int status) {
     return;
   }
 
-  r = uv_tcp_simultaneous_accepts((uv_tcp_t*) stream, 1);
-  if (r) {
-    fprintf(stderr, "Flag error: %s: %s\n", uv_err_name(r), uv_strerror(r));
-    return;
-  }
-
+  /* Accept before anything else can fail: returning from this callback without
+   * having accepted makes libuv stop watching the listening socket, and only
+   * uv_accept() ever starts it again, so the server would take no further
+   * connections at all. */
   r = uv_accept(server, stream);
   if (r) {
     fprintf(stderr, "Accept error: %s: %s\n", uv_err_name(r), uv_strerror(r));
+    close_connection((uv_handle_t*) stream);
     return;
   }
 
-  r = uv_tcp_nodelay((uv_tcp_t*) stream, 1);
-  if (r) {
+  /* Neither flag is worth dropping a connection over. */
+  r = uv_tcp_simultaneous_accepts((uv_tcp_t*) stream, 1);
+  if (r)
     fprintf(stderr, "Flag error: %s: %s\n", uv_err_name(r), uv_strerror(r));
-    return;
-  }
+
+  r = uv_tcp_nodelay((uv_tcp_t*) stream, 1);
+  if (r)
+    fprintf(stderr, "Flag error: %s: %s\n", uv_err_name(r), uv_strerror(r));
 
   r = uv_read_start(stream, on_alloc, on_read);
   if (r) {
@@ -812,6 +816,11 @@ static void
 add_mime_type(const char* ext, const char* value) {
   int hr;
   khint_t k = kh_put(mime_type, mime_type, ext, &hr);
+  /* On failure kh_put returns kh_end(), which is not a slot to write to. */
+  if (hr < 0) {
+    fprintf(stderr, "Allocate error: %s\n", ext);
+    return;
+  }
   kh_value(mime_type, k) = value;
 }
 
@@ -859,6 +868,10 @@ main(int argc, char* argv[]) {
   int r;
 
   mime_type = kh_init(mime_type);
+  if (mime_type == NULL) {
+    fprintf(stderr, "Allocate error: %s\n", strerror(errno));
+    return 1;
+  }
   add_mime_type(".jpg", "image/jpeg");
   add_mime_type(".png", "image/png");
   add_mime_type(".gif", "image/gif");
