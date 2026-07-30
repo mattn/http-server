@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build libuv
+        run: |
+          cmake -S deps/libuv -B deps/libuv/build -DCMAKE_BUILD_TYPE=Release -DLIBUV_BUILD_TESTS=OFF
+          cmake --build deps/libuv/build -j"$(nproc)" -t uv_a
+
+      - name: Build http-server
+        run: |
+          cc -O2 -g -Wall -Wno-unused-function \
+            -I deps/picohttpparser -I deps/libuv/include -I deps/klib \
+            server.c deps/picohttpparser/picohttpparser.c \
+            deps/libuv/build/libuv.a \
+            -o http-server -pthread -lrt -lm -ldl
+
+      - name: Smoke test
+        run: python3 test/smoke.py ./http-server
+
+  asan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build libuv
+        run: |
+          cmake -S deps/libuv -B deps/libuv/build -DCMAKE_BUILD_TYPE=Debug -DLIBUV_BUILD_TESTS=OFF
+          cmake --build deps/libuv/build -j"$(nproc)" -t uv_a
+
+      - name: Build http-server with sanitizers
+        run: |
+          cc -O1 -g -Wall -Wno-unused-function \
+            -fsanitize=address,undefined -fno-omit-frame-pointer \
+            -I deps/picohttpparser -I deps/libuv/include -I deps/klib \
+            server.c deps/picohttpparser/picohttpparser.c \
+            deps/libuv/build/libuv.a \
+            -o http-server-asan -pthread -lrt -lm -ldl
+
+      - name: Smoke test under ASan/UBSan
+        env:
+          ASAN_OPTIONS: detect_leaks=0
+        run: python3 test/smoke.py ./http-server-asan
