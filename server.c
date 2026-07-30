@@ -526,7 +526,12 @@ request_complete(http_request* request) {
     respond_status(request, status);
     return;
   }
-  request->keep_alive = find_header_value(request, "Connection", "keep-alive");
+  /* HTTP/1.1 is persistent unless the client asks to close; HTTP/1.0 is the
+   * other way round. */
+  if (request->minor_version >= 1)
+    request->keep_alive = !find_header_value(request, "Connection", "close");
+  else
+    request->keep_alive = find_header_value(request, "Connection", "keep-alive");
 
   uv_fs_t* open_req = malloc(sizeof(uv_fs_t));
   if (open_req == NULL) {
