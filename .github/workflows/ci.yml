@@ -51,6 +51,62 @@ jobs:
             -o http-server-asan -pthread -lrt -lm -ldl
 
       - name: Smoke test under ASan/UBSan
-        env:
-          ASAN_OPTIONS: detect_leaks=0
         run: python3 test/smoke.py ./http-server-asan
+
+      - name: Fuzz under ASan/UBSan
+        run: python3 test/fuzz.py ./http-server-asan 4000
+
+  analyze:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      # The analyzer already reports on this file, including several findings
+      # that come out of khash's macros rather than our own code, so this is a
+      # ratchet rather than a clean gate: it fails if the count goes up. Lower
+      # BASELINE as findings are fixed.
+      - name: Static analysis
+        env:
+          BASELINE: 9
+        run: |
+          clang --analyze -Xanalyzer -analyzer-output=text \
+            -Wall -Wextra -Wno-unused-parameter -Wno-unused-function \
+            -I deps/picohttpparser -I deps/libuv/include -I deps/klib \
+            server.c 2>&1 | tee analysis.log
+          found=$(grep -c "warning:" analysis.log || true)
+          echo "findings: $found (baseline $BASELINE)"
+          grep "warning:" analysis.log || true
+          if [ "$found" -gt "$BASELINE" ]; then
+            echo "static analysis found $found issues, up from $BASELINE"
+            exit 1
+          fi
+
+  codeql:
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: c-cpp
+
+      - name: Build libuv
+        run: |
+          cmake -S deps/libuv -B deps/libuv/build -DCMAKE_BUILD_TYPE=Release -DLIBUV_BUILD_TESTS=OFF
+          cmake --build deps/libuv/build -j"$(nproc)" -t uv_a
+
+      - name: Build http-server
+        run: |
+          cc -O2 -g -Wall -Wno-unused-function \
+            -I deps/picohttpparser -I deps/libuv/include -I deps/klib \
+            server.c deps/picohttpparser/picohttpparser.c \
+            deps/libuv/build/libuv.a \
+            -o http-server -pthread -lrt -lm -ldl
+
+      - uses: github/codeql-action/analyze@v3
