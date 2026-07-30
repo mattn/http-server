@@ -113,6 +113,9 @@ def main():
         f.write("UTF8\n")
     with open(os.path.join(root, "a.png"), "w") as f:
         f.write("PNG\n")
+    # Bigger than WRITE_BUF_SIZE, so serving it spans several loop iterations.
+    with open(os.path.join(root, "big.bin"), "wb") as f:
+        f.write(b"X" * (2 * 1024 * 1024))
     with open(os.path.join(root, "unknown.bin"), "w") as f:
         f.write("BIN\n")
     # Outside the document root: must never be served.
@@ -215,6 +218,37 @@ def main():
             got.append(marker in data)
         s.close()
         check("two requests on one connection", got, [True, True])
+
+        print("surviving overlapping requests on one connection")
+        # A second request, or garbage, arriving while a response is streaming
+        # used to give the connection a second owner and get it closed twice.
+        for name, payloads in (
+                ("garbage during a transfer",
+                 [b"GET /big.bin HTTP/1.1\r\nHost: x\r\nConnection: keep-alive\r\n\r\n",
+                  b"GARBAGE\r\n\r\n"]),
+                ("second request during a transfer",
+                 [b"GET /big.bin HTTP/1.1\r\nHost: x\r\nConnection: keep-alive\r\n\r\n",
+                  b"GET /index.html HTTP/1.1\r\nHost: x\r\n\r\n"]),
+                ("two misses back to back",
+                 [b"GET /nope1 HTTP/1.1\r\nHost: x\r\n\r\n",
+                  b"GET /nope2 HTTP/1.1\r\nHost: x\r\n\r\n"]),
+                ("pipelined in one write",
+                 [b"GET /nope1 HTTP/1.1\r\nHost: x\r\n\r\n"
+                  b"GET /nope2 HTTP/1.1\r\nHost: x\r\n\r\n"]),
+        ):
+            for _ in range(5):
+                try:
+                    s = socket.socket()
+                    s.settimeout(2)
+                    s.connect(("127.0.0.1", port))
+                    for payload in payloads:
+                        s.sendall(payload)
+                    time.sleep(0.02)
+                    s.close()
+                except OSError:
+                    pass
+            time.sleep(0.3)
+            check(f"alive after {name}", proc.poll(), None)
 
         print("not leaking connections")
         # A client that connects and goes away leaves no request in flight, so
