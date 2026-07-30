@@ -62,12 +62,32 @@ typedef struct {
   size_t cap;
   size_t last_len;
   struct _http_request* request;
+  /* A connection serves one request at a time, so the request lives here
+   * instead of being allocated per request; `request` points at it while one
+   * is in flight and is NULL when the connection is idle. */
+  struct _http_request request_storage;
   char read_buf[READ_BUF_SIZE];
 } http_connection;
 
+struct file_cache_entry;
+
 typedef struct {
+  uv_file fd;
   uv_write_t write_req;
+  uv_write_t header_req;
+  uv_fs_t read_req;
+  char* header;
+  char* pbuf;
+  uv_buf_t buf;
   uv_handle_t* handle;
+
+  uint64_t response_size;
+  uint64_t response_offset;
+
+  /* Held (reference counted) while a cached response is being written, so an
+   * entry displaced by a newer version of the file cannot be freed while its
+   * buffers are still queued in libuv. */
+  struct file_cache_entry* cache_entry;
 
   http_request* request;
 } http_response;
