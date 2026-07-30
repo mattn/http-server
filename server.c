@@ -326,12 +326,47 @@ on_shutdown(uv_shutdown_t* req, int status) {
 }
 */
 
+/* The received name has to match in full.  Comparing only as many bytes as
+ * arrived would make every prefix of the name match, so a header called "C"
+ * would answer for "Connection". */
+static int
+header_name_is(const struct phr_header* header, const char* name) {
+  size_t len = strlen(name);
+  return header->name_len == len && !strncasecmp(header->name, name, len);
+}
+
+/* Connection is a comma separated list of tokens, so a value has to be matched
+ * one token at a time rather than against the whole field. */
+static int
+header_has_token(const struct phr_header* header, const char* token) {
+  size_t token_len = strlen(token);
+  const char* p = header->value;
+  const char* end = p + header->value_len;
+
+  while (p < end) {
+    const char* start;
+    size_t len;
+
+    while (p < end && (*p == ' ' || *p == '\t' || *p == ','))
+      p++;
+    start = p;
+    while (p < end && *p != ',')
+      p++;
+    len = p - start;
+    while (len > 0 && (start[len - 1] == ' ' || start[len - 1] == '\t'))
+      len--;
+    if (len == token_len && !strncasecmp(start, token, token_len))
+      return 1;
+  }
+  return 0;
+}
+
 static int
 content_length(http_request* request) {
-  int i;
+  size_t i;
   char buf[16];
   for (i = 0; i < request->num_headers; i++)
-    if (!strncasecmp(request->headers[i].name, "content-length", request->headers[i].name_len)) {
+    if (header_name_is(&request->headers[i], "content-length")) {
       size_t len = request->headers[i].value_len;
       if (len >= sizeof(buf)) len = sizeof(buf) - 1;
       memcpy(buf, request->headers[i].value, len);
@@ -343,15 +378,15 @@ content_length(http_request* request) {
 
 static int
 find_header_value(http_request* request, const char* name, const char* value) {
-  int i;
+  size_t i;
   for (i = 0; i < request->num_headers; i++) {
 #ifdef DEBUG
     printf("%.*s: %.*s\n",
       (int) request->headers[i].name_len, request->headers[i].name,
       (int) request->headers[i].value_len, request->headers[i].value);
 #endif
-    if (!strncasecmp(request->headers[i].name, name, request->headers[i].name_len) &&
-        !strncasecmp(request->headers[i].value, value, request->headers[i].value_len))
+    if (header_name_is(&request->headers[i], name) &&
+        header_has_token(&request->headers[i], value))
       return 1;
   }
   return 0;
