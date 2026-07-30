@@ -105,6 +105,12 @@ def main():
         f.write("SUB-INDEX\n")
     with open(os.path.join(root, "sub", "f.txt"), "w") as f:
         f.write("SUBFILE\n")
+    with open(os.path.join(root, "a b.txt"), "w") as f:
+        f.write("SPACE\n")
+    with open(os.path.join(root, "c+d.txt"), "w") as f:
+        f.write("PLUS\n")
+    with open(os.path.join(root, "日本語.txt"), "w") as f:
+        f.write("UTF8\n")
     with open(os.path.join(root, "a.png"), "w") as f:
         f.write("PNG\n")
     with open(os.path.join(root, "unknown.bin"), "w") as f:
@@ -136,6 +142,24 @@ def main():
         check("missing file is 404",
               status(port, b"/nope").startswith("HTTP/1.0 404"), True)
 
+        print("percent escapes")
+        check("%20 becomes a space", body(port, b"/a%20b.txt"), b"SPACE\n")
+        check("lowercase hex", body(port, b"/a%2ab.txt".replace(b"%2a", b"%20")), b"SPACE\n")
+        check("%2B becomes a plus", body(port, b"/c%2Bd.txt"), b"PLUS\n")
+        # '+' is form-encoding, not path-encoding: it stays a literal plus.
+        check("plus stays a plus", body(port, b"/c+d.txt"), b"PLUS\n")
+        check("utf-8 name", body(port, b"/%E6%97%A5%E6%9C%AC%E8%AA%9E.txt"), b"UTF8\n")
+        check("escaped dot in a name", body(port, b"/a%20b%2Etxt"), b"SPACE\n")
+
+        print("rejecting bad escapes")
+        for target, why in ((b"/abc%", "truncated escape"),
+                            (b"/abc%2", "one hex digit"),
+                            (b"/abc%zz", "non-hex digits"),
+                            (b"/a%00b", "encoded NUL"),
+                            (b"/%2fetc/passwd", "encoded separator"),
+                            (b"/%2Fetc/passwd", "encoded separator, upper case")):
+            check(f"{why} is 400", status(port, target).startswith("HTTP/1.0 400"), True)
+
         print("content types")
         check("known extension", content_type(port, b"/a.png"), "image/png")
         # An unknown extension must not inherit the type of an earlier response.
@@ -158,7 +182,14 @@ def main():
                        b"/sub/../../secret.txt",
                        b"//../secret.txt",
                        b"/sub/./../../secret.txt",
-                       b"/a/b/../../../secret.txt"):
+                       b"/a/b/../../../secret.txt",
+                       # Escaped forms must resolve to the same thing, not slip past.
+                       b"/%2e%2e/secret.txt",
+                       b"/%2E%2E/secret.txt",
+                       b"/sub/%2e%2e/%2e%2e/secret.txt",
+                       b"/%2e%2e%2fsecret.txt",
+                       b"/..%2fsecret.txt",
+                       b"/%252e%252e/secret.txt"):
             leaked = CANARY.encode() in request(port, target)
             check(f"{target.decode()} does not escape", leaked, False)
 

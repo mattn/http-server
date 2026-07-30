@@ -293,11 +293,24 @@ find_header_value(http_request* request, const char* name, const char* value) {
   return 0;
 }
 
+static int
+hex_value(unsigned char c) {
+  if (c >= '0' && c <= '9') return c - '0';
+  if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+  if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+  return -1;
+}
+
 /* Resolves the request target into request->file_path as a path below
- * static_dir.  "." and ".." are resolved lexically, and a target that would
- * escape the document root or that does not fit in file_path is rejected
- * instead of truncated.  Returns 0 on success, otherwise the HTTP status code
- * to reject the request with. */
+ * static_dir.  Percent escapes are decoded, "." and ".." are resolved
+ * lexically, and a target that would escape the document root or that does not
+ * fit in file_path is rejected instead of truncated.  Returns 0 on success,
+ * otherwise the HTTP status code to reject the request with.
+ *
+ * Decoding happens per segment and before the "."/".." checks, so an escaped
+ * "%2e%2e" is resolved as a parent reference rather than reaching the file
+ * system.  A separator that arrives escaped is refused outright: decoding it
+ * in place would hand the kernel a separator the segment loop never saw. */
 static int
 build_file_path(http_request* request) {
   const char* p = request->path;
@@ -320,18 +333,45 @@ build_file_path(http_request* request) {
 
   while (p < end) {
     const char* seg;
+    char* seg_start;
+    char* w;
     size_t seg_len;
 
     while (p < end && IS_PATH_SEP(*p)) p++;
     seg = p;
     while (p < end && !IS_PATH_SEP(*p)) p++;
-    seg_len = p - seg;
-
-    if (seg_len == 0)
+    if (seg == p)
       break;
-    if (seg_len == 1 && seg[0] == '.')
+
+    /* Decode into the position the segment would occupy, leaving room for the
+     * separator, and check the bound against what is actually written.  The
+     * segment is only committed once it is known not to be "." or "..". */
+    seg_start = out + 1;
+    w = seg_start;
+    while (seg < p) {
+      int c = (unsigned char) *seg++;
+      if (c == '%') {
+        int hi, lo;
+        if (p - seg < 2)
+          return 400;
+        hi = hex_value((unsigned char) seg[0]);
+        lo = hex_value((unsigned char) seg[1]);
+        if (hi < 0 || lo < 0)
+          return 400;
+        seg += 2;
+        c = (hi << 4) | lo;
+        if (c == 0 || IS_PATH_SEP(c))
+          return 400;
+      }
+      if (w >= limit)
+        return 414;
+      *w++ = (char) c;
+    }
+    seg_len = w - seg_start;
+
+    if (seg_len == 1 && seg_start[0] == '.')
       continue;
-    if (seg_len == 2 && seg[0] == '.' && seg[1] == '.') {
+    if (seg_len == 2 && seg_start[0] == '.' && seg_start[1] == '.') {
       if (out == root_end)
         return 404;
       /* Drop the segment appended last, along with its leading separator. */
@@ -339,11 +379,8 @@ build_file_path(http_request* request) {
         ;
       continue;
     }
-    if (out + 1 + seg_len > limit)
-      return 414;
-    *out++ = '/';
-    memcpy(out, seg, seg_len);
-    out += seg_len;
+    *out = '/';
+    out = w;
   }
 
   if (out == root_end || IS_PATH_SEP(end[-1])) {
