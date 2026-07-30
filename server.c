@@ -115,8 +115,10 @@ static void response_error(uv_handle_t*, int, const char*, const char*);
 
 static void
 destroy_request(http_request* request, int close_handle) {
-  if (close_handle && request->handle) {
-    uv_close((uv_handle_t*) request->handle, on_close);
+  if (request->handle) {
+    request->handle->data = NULL;
+    if (close_handle)
+      uv_close(request->handle, on_close);
   }
   free(request);
 }
@@ -398,14 +400,11 @@ on_read(uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf) {
   if (nread < 0) {
     if (buf->base)
       free(buf->base);
-    /*
-    uv_shutdown_t* shutdown_req = (uv_shutdown_t*) malloc(sizeof(uv_shutdown_t));
-    if (shutdown_req == NULL) {
-      fprintf(stderr, "Allocate error\n");
-      return;
-    }
-    uv_shutdown(shutdown_req, stream, on_shutdown);
-    */
+    /* A connection with no request in flight has no other owner, so nothing
+     * else would ever close it.  One that does is closed by the request or
+     * response that owns it, once its write fails. */
+    if (stream->data == NULL && !uv_is_closing((uv_handle_t*) stream))
+      uv_close((uv_handle_t*) stream, on_close);
     return;
   }
 
@@ -542,6 +541,8 @@ on_connection(uv_stream_t* server, int status) {
     fprintf(stderr, "Allocate error: %s\n", strerror(errno));
     return;
   }
+  /* No request in flight yet; see on_read(). */
+  stream->data = NULL;
 
   r = uv_tcp_init(loop, (uv_tcp_t*) stream);
   if (r) {

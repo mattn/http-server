@@ -185,6 +185,25 @@ def main():
         s.close()
         check("two requests on one connection", got, [True, True])
 
+        print("not leaking connections")
+        # A client that connects and goes away leaves no request in flight, so
+        # nothing but on_read() can close the handle.
+        fds = os.path.join("/proc", str(proc.pid), "fd")
+        if os.path.isdir(fds):
+            before = len(os.listdir(fds))
+            for _ in range(40):
+                s = socket.socket()
+                s.connect(("127.0.0.1", port))
+                s.close()
+            time.sleep(0.5)
+            for _ in range(20):
+                body(port, b"/index.html")
+            time.sleep(0.5)
+            grew = len(os.listdir(fds)) - before
+            check("descriptors reclaimed after clients disconnect", grew < 10, True)
+        else:
+            print("  skip  descriptor check (no /proc)")
+
         print("still alive")
         check("server survived", proc.poll(), None)
         check("serves after all of the above", body(port, b"/index.html"), b"ROOT-INDEX\n")
