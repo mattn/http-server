@@ -182,7 +182,7 @@ on_fs_open(uv_fs_t* req) {
   uint64_t response_size = stat_req.statbuf.st_size;
   uv_fs_req_cleanup(&stat_req);
 
-  const static char* ctype = "application/octet-stream";
+  const char* ctype = "application/octet-stream";
   const char* dot = request->file_path;
   const char* ptr = dot;
   while (dot) {
