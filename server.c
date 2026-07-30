@@ -57,6 +57,10 @@
 
 #define WRITE_BUF_SIZE (8192/4)
 
+/* A request head can arrive in pieces, so it is buffered until complete. This
+ * caps how much a client can make us hold before it has sent a whole one. */
+#define MAX_REQUEST_HEAD (64 * 1024)
+
 /* Appended when the request target names a directory. */
 #define INDEX_FILE "index.html"
 
@@ -130,7 +134,9 @@ close_connection(uv_handle_t* handle) {
 static void
 destroy_request(http_request* request, int close_handle) {
   if (request->handle) {
-    request->handle->data = NULL;
+    http_connection* conn = (http_connection*) request->handle->data;
+    if (conn)
+      conn->request = NULL;
     if (close_handle)
       close_connection(request->handle);
   }
@@ -552,13 +558,15 @@ request_complete(http_request* request) {
 
 static void
 on_read(uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf) {
+  http_connection* conn = (http_connection*) stream->data;
+
   if (nread < 0) {
     if (buf->base)
       free(buf->base);
     /* A connection with no request in flight has no other owner, so nothing
      * else would ever close it.  One that does is closed by the request or
      * response that owns it, once its write fails. */
-    if (stream->data == NULL)
+    if (conn == NULL || conn->request == NULL)
       close_connection((uv_handle_t*) stream);
     return;
   }
@@ -571,60 +579,104 @@ on_read(uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf) {
   /* One request per connection at a time.  Anything arriving while one is in
    * flight -- a pipelined request, or garbage -- is ignored: serving it would
    * give the connection a second owner, and whichever finished first would
-   * close the handle out from under the other.  A second request in a single
-   * read is already dropped, since the target is parsed only once. */
-  if (stream->data != NULL) {
+   * close the handle out from under the other. */
+  if (conn == NULL || conn->request != NULL) {
     free(buf->base);
+    return;
+  }
+
+  if (conn->len + (size_t) nread > MAX_REQUEST_HEAD) {
+    free(buf->base);
+    fprintf(stderr, "Request head too large\n");
+    response_error((uv_handle_t*) stream, 431, "Request Header Fields Too Large", NULL);
+    close_connection((uv_handle_t*) stream);
+    return;
+  }
+
+  if (conn->len + (size_t) nread > conn->cap) {
+    size_t cap = conn->cap ? conn->cap : 8192;
+    char* grown;
+    while (cap < conn->len + (size_t) nread)
+      cap *= 2;
+    grown = realloc(conn->buf, cap);
+    if (grown == NULL) {
+      free(buf->base);
+      fprintf(stderr, "Allocate error: %s\n", strerror(errno));
+      close_connection((uv_handle_t*) stream);
+      return;
+    }
+    conn->buf = grown;
+    conn->cap = cap;
+  }
+  memcpy(conn->buf + conn->len, buf->base, (size_t) nread);
+  conn->len += (size_t) nread;
+  free(buf->base);
+
+  /* Parsed into locals first: an incomplete head has to be able to return
+   * without having allocated a request. */
+  const char* method;
+  size_t method_len;
+  const char* path;
+  size_t path_len;
+  int minor_version;
+  struct phr_header headers[32];
+  size_t num_headers = sizeof(headers) / sizeof(headers[0]);
+  int nparsed = phr_parse_request(
+          conn->buf,
+          conn->len,
+          &method,
+          &method_len,
+          &path,
+          &path_len,
+          &minor_version,
+          headers,
+          &num_headers,
+          conn->last_len);
+  if (nparsed == -2) {
+    /* Not a whole head yet; keep it and wait for the rest. */
+    conn->last_len = conn->len;
+    return;
+  }
+  if (nparsed < 0) {
+    conn->len = conn->last_len = 0;
+    fprintf(stderr, "Invalid request\n");
+    response_error((uv_handle_t*) stream, 400, "Bad Request", NULL);
+    close_connection((uv_handle_t*) stream);
     return;
   }
 
   http_request* request = calloc(1, sizeof(http_request));
   if (request == NULL) {
-    free(buf->base);
     fprintf(stderr, "Allocate error: %s\n", strerror(errno));
     close_connection((uv_handle_t*) stream);
     return;
   }
-
   request->handle = (uv_handle_t*) stream;
-
-  request->num_headers = sizeof(request->headers) / sizeof(request->headers[0]);
-  int nparsed = phr_parse_request(
-          buf->base,
-          nread,
-          &request->method,
-          &request->method_len,
-          &request->path,
-          &request->path_len,
-          &request->minor_version,
-          request->headers,
-          &request->num_headers,
-          0);
-  if (nparsed < 0) {
-    free(request);
-    free(buf->base);
-    fprintf(stderr, "Invalid request\n");
-    close_connection((uv_handle_t*) stream);
-    return;
-  }
-  /* From here on this request owns the connection. */
-  stream->data = request;
-  /*
-  int cl = content_length(request);
-  if (cl >= 0 && cl < buf->len - nparsed) {
-    free(request);
-    free(buf->base);
-    return;
-  }
-  */
+  request->method = method;
+  request->method_len = method_len;
+  request->path = path;
+  request->path_len = path_len;
+  request->minor_version = minor_version;
+  memcpy(request->headers, headers, sizeof(headers));
+  request->num_headers = num_headers;
   /* TODO: handle reading whole payload */
-  request->payload = buf->base + nparsed;
-  request->payload_len = buf->len - nparsed;
+  request->payload = conn->buf + nparsed;
+  request->payload_len = conn->len - (size_t) nparsed;
+
+  /* From here on this request owns the connection.  Its path and headers point
+   * into conn->buf, which stays allocated; the buffer is only rewritten by a
+   * later read, and reads are ignored while a request is in flight. */
+  conn->request = request;
+  conn->len = conn->last_len = 0;
   request_complete(request);
-  free(buf->base);
 }
 
 static void on_close(uv_handle_t* peer) {
+  http_connection* conn = (http_connection*) peer->data;
+  if (conn) {
+    free(conn->buf);
+    free(conn);
+  }
   free(peer);
 }
 
@@ -707,12 +759,18 @@ on_connection(uv_stream_t* server, int status) {
     fprintf(stderr, "Allocate error: %s\n", strerror(errno));
     return;
   }
-  /* No request in flight yet; see on_read(). */
-  stream->data = NULL;
+  stream->data = calloc(1, sizeof(http_connection));
+  if (stream->data == NULL) {
+    fprintf(stderr, "Allocate error: %s\n", strerror(errno));
+    free(stream);
+    return;
+  }
 
   r = uv_tcp_init(loop, (uv_tcp_t*) stream);
   if (r) {
     fprintf(stderr, "Socket creation error: %s: %s\n", uv_err_name(r), uv_strerror(r));
+    free(stream->data);
+    free(stream);
     return;
   }
 

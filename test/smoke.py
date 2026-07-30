@@ -163,6 +163,49 @@ def main():
                             (b"/%2Fetc/passwd", "encoded separator, upper case")):
             check(f"{why} is 400", status(port, target).startswith("HTTP/1.0 400"), True)
 
+        print("requests arriving in pieces")
+
+        def in_pieces(parts):
+            s = socket.socket()
+            s.settimeout(3)
+            try:
+                s.connect(("127.0.0.1", port))
+                for part in parts:
+                    s.sendall(part)
+                    time.sleep(0.05)
+                data = b""
+                while b"\r\n\r\n" not in data:
+                    chunk = s.recv(65536)
+                    if not chunk:
+                        return "<closed>"
+                    data += chunk
+                return data.split(b"\r\n", 1)[0].decode("latin-1")
+            except OSError:
+                return "<error>"
+            finally:
+                s.close()
+
+        check("header terminator in its own packet",
+              in_pieces([b"GET /index.html HTTP/1.1\r\nHost: x\r\n", b"\r\n"]),
+              "HTTP/1.1 200 OK")
+        check("request line split mid-target",
+              in_pieces([b"GET /index.h", b"tml HTTP/1.1\r\nHost: x\r\n\r\n"]),
+              "HTTP/1.1 200 OK")
+        check("one header per packet",
+              in_pieces([b"GET /index.html HTTP/1.1\r\n", b"Host: x\r\n",
+                         b"User-Agent: t\r\n", b"\r\n"]),
+              "HTTP/1.1 200 OK")
+        check("byte at a time",
+              in_pieces([bytes([c]) for c in b"GET / HTTP/1.1\r\nHost: x\r\n\r\n"]),
+              "HTTP/1.1 200 OK")
+        # A client must not be able to make the server buffer without bound.
+        check("oversized head is refused",
+              in_pieces([b"GET / HTTP/1.1\r\nHost: x\r\n",
+                         b"X: " + b"v" * 60000 + b"\r\n",
+                         b"Y: " + b"v" * 60000 + b"\r\n\r\n"]),
+              "HTTP/1.0 431 Request Header Fields Too Large")
+        check("still alive after that", proc.poll(), None)
+
         print("Connection header matching")
 
         def conn(extra, version=b"1.1"):
