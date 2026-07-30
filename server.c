@@ -832,9 +832,16 @@ main(int argc, char* argv[]) {
     } else
     if (!strcmp(argv[i], "-p")) {
       if (i == argc-1) usage(argv[0]);
+      /* Range checked as a long, before narrowing: assigning to an int first
+       * lets a value like 4294967296 truncate to something that passes. */
+      const char* arg = argv[++i];
       char* e = NULL;
-      port = strtol(argv[++i], &e, 10);
-      if ((e && *e) || port < 0 || port > 65535) usage(argv[0]);
+      long value;
+      errno = 0;
+      value = strtol(arg, &e, 10);
+      if (e == arg || *e || errno != 0 || value < 0 || value > 65535)
+        usage(argv[0]);
+      port = (int) value;
     } else
     if (!strcmp(argv[i], "-d")) {
       if (i == argc-1) usage(argv[0]);

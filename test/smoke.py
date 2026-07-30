@@ -122,6 +122,19 @@ def main():
     with open(os.path.join(tmp, "secret.txt"), "w") as f:
         f.write(CANARY + "\n")
 
+    print("rejecting bad arguments")
+    for bad in ("4294967296", "", "65536", "-1", "abc", "80x", "0x50"):
+        # Must exit non-zero rather than silently binding some other port. A
+        # binary that accepts the value keeps running, so a timeout counts as
+        # not refused rather than as an error in the test.
+        try:
+            done = subprocess.run([binary, "-a", "127.0.0.1", "-p", bad, "-d", root],
+                                  capture_output=True, timeout=5)
+            refused = done.returncode != 0
+        except subprocess.TimeoutExpired:
+            refused = False
+        check(f"-p {bad!r} is refused", refused, True)
+
     port = free_port()
     log = open(os.path.join(tmp, "server.log"), "w+")
     proc = subprocess.Popen(
