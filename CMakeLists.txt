@@ -19,10 +19,6 @@ include_directories(
 	${PROJECT_SOURCE_DIR}/deps/klib
 )
 
-if (CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -iquote ${PROJECT_SOURCE_DIR}/deps/libuv/include")
-endif()
-
 add_executable(http-server server.c deps/picohttpparser/picohttpparser.c)
 
 set(LIBUV_LIBRARIES ${CMAKE_CURRENT_SOURCE_DIR}/deps/libuv/build/libuv.a)

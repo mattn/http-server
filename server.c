@@ -57,9 +57,21 @@
     abort();                                              \
   } while (0)
 
+#define WRITE_BUF_SIZE (8192/4)
+
 /* A request head can arrive in pieces, so it is buffered until complete. This
  * caps how much a client can make us hold before it has sent a whole one. */
 #define MAX_REQUEST_HEAD (64 * 1024)
+
+/* Files up to this size are cached whole in memory; anything larger is
+ * streamed from disk so serving a big tree cannot grow the heap without
+ * bound and a cold large file does not block the loop while it loads. */
+#define MAX_CACHE_FILE_SIZE (1024 * 1024)
+
+/* A cached file is re-stat()ed at most this often, so a change on disk can
+ * be served stale for up to this long in exchange for not paying a stat per
+ * request. */
+#define CACHE_REVALIDATE_MS 1000
 
 /* Appended when the request target names a directory. */
 #define INDEX_FILE "index.html"
@@ -94,16 +106,24 @@ KHASH_MAP_INIT_STR(mime_type, const char*)
 static khash_t(mime_type)* mime_type;
 
 /* Every served file is kept in memory with both variants of its response
- * header rendered up front, so a hit costs one hash lookup and one write. */
-typedef struct {
+ * header rendered up front, so a hit costs one hash lookup and one write.
+ * The size and mtime recorded at load time are checked against the disk copy
+ * on every hit, so a modified file is reloaded instead of served stale. */
+typedef struct file_cache_entry {
   char* path;
   char* body;
   size_t body_len;
+  time_t mtime;
   const char* ctype;
   char* header_keep_alive;
   size_t header_keep_alive_len;
   char* header_close;
   size_t header_close_len;
+  uint64_t checked_at;
+  /* In-flight responses hold a reference; a dead (displaced) entry is only
+   * freed once the last of them has finished writing. */
+  int refs;
+  int dead;
 } file_cache_entry;
 KHASH_MAP_INIT_STR(file_cache, file_cache_entry*)
 static khash_t(file_cache)* file_cache;
@@ -128,13 +148,18 @@ btime(int f) {
 #endif
 
 static void on_write(uv_write_t*, int);
+static void on_write_cached(uv_write_t*, int);
+static void on_write_header(uv_write_t*, int);
+static void start_body(http_response*);
 static void on_write_error_free_buf(uv_write_t*, int);
 static void on_read(uv_stream_t*, ssize_t, const uv_buf_t*);
 static void on_close(uv_handle_t*);
 static void on_connection(uv_stream_t*, int);
 static void on_alloc(uv_handle_t*, size_t, uv_buf_t*);
+static void on_fs_read(uv_fs_t*);
 static void response_error(uv_handle_t*, int, const char*, const char*);
 static void respond_with_cache_entry(http_request*, file_cache_entry*);
+static void file_cache_entry_unref(file_cache_entry*);
 
 /* Closing a handle twice aborts inside libuv, and with asserts off links it
  * into the closing queue twice so on_close() frees it twice, so every close
@@ -145,6 +170,8 @@ close_connection(uv_handle_t* handle) {
     uv_close(handle, on_close);
 }
 
+/* The request is embedded in its connection, so releasing it is just clearing
+ * the owner pointer; the storage is reclaimed with the connection. */
 static void
 destroy_request(http_request* request, int close_handle) {
   if (request->handle) {
@@ -154,17 +181,54 @@ destroy_request(http_request* request, int close_handle) {
     if (close_handle)
       close_connection(request->handle);
   }
-  free(request);
+}
+
+static void
+close_file(uv_file fd) {
+  uv_fs_t close_req;
+  uv_fs_close(loop, &close_req, fd, NULL);
+  uv_fs_req_cleanup(&close_req);
 }
 
 static void
 destroy_response(http_response* response, int close_handle) {
+  if (response->header) free(response->header);
+  if (response->pbuf) free(response->pbuf);
+  file_cache_entry_unref(response->cache_entry);
   if (response->request) destroy_request(response->request, close_handle);
+  if (response->fd != -1)
+    close_file((uv_file) response->fd);
   free(response);
 }
 
+/* Continuation for a streamed (uncached) response: keep reading chunks until
+ * the whole file has gone out. */
 static void
 on_write(uv_write_t* req, int status) {
+  http_response* response = (http_response*) req->data;
+
+  if (status != 0) {
+    fprintf(stderr, "Write error: %s: %s\n", uv_err_name(status), uv_strerror(status));
+    destroy_response(response, 1);
+    return;
+  }
+
+  if (response->response_offset >= response->response_size) {
+    destroy_response(response, !response->request->keep_alive);
+    return;
+  }
+
+  int r = uv_fs_read(loop, &response->read_req, (uv_file) response->fd, &response->buf, 1, response->response_offset, on_fs_read);
+  if (r) {
+    fprintf(stderr, "File read error: %s: %s\n", uv_err_name(r), uv_strerror(r));
+    response_error(response->handle, 500, "Internal Server Error", NULL);
+    destroy_response(response, 1);
+  }
+}
+
+/* Completion for a cached response: header and body went out in one write. */
+static void
+on_write_cached(uv_write_t* req, int status) {
   http_response* response = (http_response*) req->data;
 
   if (status != 0) {
@@ -203,8 +267,18 @@ destroy_file_cache_entry(file_cache_entry* entry) {
   free(entry);
 }
 
+static void
+file_cache_entry_unref(file_cache_entry* entry) {
+  if (entry == NULL) {
+    return;
+  }
+  entry->refs--;
+  if (entry->dead && entry->refs == 0)
+    destroy_file_cache_entry(entry);
+}
+
 static file_cache_entry*
-create_file_cache_entry(const char* path, const char* ctype, char* body, size_t body_len) {
+create_file_cache_entry(const char* path, const char* ctype, char* body, size_t body_len, time_t mtime) {
   file_cache_entry* entry = calloc(1, sizeof(file_cache_entry));
   if (entry == NULL) {
     free(body);
@@ -219,6 +293,7 @@ create_file_cache_entry(const char* path, const char* ctype, char* body, size_t 
   }
   entry->body = body;
   entry->body_len = body_len;
+  entry->mtime = mtime;
   entry->ctype = ctype;
 
   size_t header_capacity = strlen(ctype) + 128;
@@ -229,7 +304,7 @@ create_file_cache_entry(const char* path, const char* ctype, char* body, size_t 
     return NULL;
   }
 
-  entry->header_keep_alive_len = snprintf(
+  int keep_alive_len = snprintf(
       entry->header_keep_alive,
       header_capacity,
       "HTTP/1.1 200 OK\r\n"
@@ -239,7 +314,7 @@ create_file_cache_entry(const char* path, const char* ctype, char* body, size_t 
       "\r\n",
       body_len,
       ctype);
-  entry->header_close_len = snprintf(
+  int close_len = snprintf(
       entry->header_close,
       header_capacity,
       "HTTP/1.1 200 OK\r\n"
@@ -249,11 +324,20 @@ create_file_cache_entry(const char* path, const char* ctype, char* body, size_t 
       "\r\n",
       body_len,
       ctype);
+  /* snprintf reports the length it wanted, not what it wrote; a length taken
+   * at face value would hand libuv a buffer descriptor past the allocation. */
+  if (keep_alive_len < 0 || (size_t) keep_alive_len >= header_capacity ||
+      close_len < 0 || (size_t) close_len >= header_capacity) {
+    destroy_file_cache_entry(entry);
+    return NULL;
+  }
+  entry->header_keep_alive_len = (size_t) keep_alive_len;
+  entry->header_close_len = (size_t) close_len;
   return entry;
 }
 
 static file_cache_entry*
-load_file_cache_entry(const char* path) {
+load_file_cache_entry(const char* path, int* too_large) {
   int fd = open(path, O_RDONLY);
   if (fd < 0) {
     return NULL;
@@ -264,6 +348,12 @@ load_file_cache_entry(const char* path) {
    * by which point a 200 and a Content-Length would already have gone out. */
   if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) {
     close(fd);
+    return NULL;
+  }
+
+  if ((uint64_t) st.st_size > MAX_CACHE_FILE_SIZE) {
+    close(fd);
+    *too_large = 1;
     return NULL;
   }
 
@@ -279,6 +369,8 @@ load_file_cache_entry(const char* path) {
     size_t offset = 0;
     while (offset < body_len) {
       ssize_t nread = read(fd, body + offset, body_len - offset);
+      if (nread < 0 && errno == EINTR)
+        continue;
       if (nread <= 0) {
         free(body);
         close(fd);
@@ -290,20 +382,38 @@ load_file_cache_entry(const char* path) {
 
   close(fd);
 
-  return create_file_cache_entry(path, find_content_type(path), body, body_len);
+  return create_file_cache_entry(path, find_content_type(path), body, body_len, st.st_mtime);
 }
 
 static file_cache_entry*
-get_or_load_file_cache_entry(const char* path) {
+get_or_load_file_cache_entry(const char* path, int* too_large) {
   khint_t k = kh_get(file_cache, file_cache, path);
   if (k != kh_end(file_cache)) {
-    return kh_value(file_cache, k);
+    file_cache_entry* entry = kh_value(file_cache, k);
+    uint64_t now = uv_now(loop);
+    if (now - entry->checked_at < CACHE_REVALIDATE_MS) {
+      return entry;
+    }
+    struct stat st;
+    if (stat(path, &st) == 0 && S_ISREG(st.st_mode) &&
+        (size_t) st.st_size == entry->body_len && st.st_mtime == entry->mtime) {
+      entry->checked_at = now;
+      return entry;
+    }
+    /* The disk copy changed or went away; drop the entry and reload.  It may
+     * still be referenced by responses in flight, so it is only marked dead
+     * here and freed by the last unref. */
+    kh_del(file_cache, file_cache, k);
+    entry->dead = 1;
+    if (entry->refs == 0)
+      destroy_file_cache_entry(entry);
   }
 
-  file_cache_entry* entry = load_file_cache_entry(path);
+  file_cache_entry* entry = load_file_cache_entry(path, too_large);
   if (entry == NULL) {
     return NULL;
   }
+  entry->checked_at = uv_now(loop);
 
   int absent = 0;
   k = kh_put(file_cache, file_cache, entry->path, &absent);
@@ -369,7 +479,7 @@ respond_with_cache_entry(http_request* request, file_cache_entry* entry) {
   }
 #endif
 
-  http_response* response = malloc(sizeof(http_response));
+  http_response* response = calloc(1, sizeof(http_response));
   if (response == NULL) {
     fprintf(stderr, "Allocate error: %s\n", strerror(errno));
     response_error(request->handle, 500, "Internal Server Error", NULL);
@@ -377,15 +487,174 @@ respond_with_cache_entry(http_request* request, file_cache_entry* entry) {
     return;
   }
 
+  response->fd = -1;
   response->request = request;
   response->handle = request->handle;
   response->write_req.data = response;
+  response->cache_entry = entry;
+  entry->refs++;
 
-  int r = uv_write(&response->write_req, (uv_stream_t*) request->handle, bufs, (unsigned int) nbufs, on_write);
+  int r = uv_write(&response->write_req, (uv_stream_t*) request->handle, bufs, (unsigned int) nbufs, on_write_cached);
   if (r) {
     fprintf(stderr, "Write error: %s: %s\n", uv_err_name(r), uv_strerror(r));
     destroy_response(response, 1);
   }
+}
+
+static void
+on_fs_open(uv_fs_t* req) {
+  http_request* request = (http_request*) req->data;
+  ssize_t result = req->result;
+
+  uv_fs_req_cleanup(req);
+  free(req);
+  if (result < 0) {
+    fprintf(stderr, "Open error: %s: %s: %s\n", request->file_path, uv_err_name(result), uv_strerror(result));
+    response_error(request->handle, 404, "Not Found", NULL);
+    destroy_request(request, 1);
+    return;
+  }
+
+  uv_fs_t stat_req;
+  int r = uv_fs_fstat(loop, &stat_req, result, NULL);
+  if (r < 0) {
+    fprintf(stderr, "Stat error: %s: %s: %s\n", request->file_path, uv_err_name(r), uv_strerror(r));
+    uv_fs_req_cleanup(&stat_req);
+    close_file((uv_file) result);
+    response_error(request->handle, 404, "Not Found", NULL);
+    destroy_request(request, 1);
+    return;
+  }
+
+  uint64_t response_size = stat_req.statbuf.st_size;
+  int regular = S_ISREG(stat_req.statbuf.st_mode);
+  uv_fs_req_cleanup(&stat_req);
+
+  /* Opening a directory succeeds on Linux, but reading it fails afterwards,
+   * by which point a 200 and a Content-Length have already gone out. */
+  if (!regular) {
+    close_file((uv_file) result);
+    response_error(request->handle, 404, "Not Found", NULL);
+    destroy_request(request, 1);
+    return;
+  }
+
+  const char* ctype = find_content_type(request->file_path);
+
+  http_response* response = calloc(1, sizeof(http_response));
+  if (response == NULL) {
+    fprintf(stderr, "Allocate error: %s\n", strerror(errno));
+    close_file((uv_file) result);
+    response_error(request->handle, 500, "Internal Server Error", NULL);
+    destroy_request(request, 1);
+    return;
+  }
+  response->response_size = response_size;
+  response->fd = result;
+  response->request = request;
+  response->handle = request->handle;
+  response->pbuf = malloc(WRITE_BUF_SIZE);
+  if (response->pbuf == NULL) {
+    fprintf(stderr, "Allocate error: %s\n", strerror(errno));
+    response_error(request->handle, 500, "Internal Server Error", NULL);
+    destroy_response(response, 1);
+    return;
+  }
+  response->buf = uv_buf_init(response->pbuf, WRITE_BUF_SIZE);
+  response->read_req.data = response;
+  response->write_req.data = response;
+
+  char bufline[1024];
+  int nbuf = snprintf(bufline,
+      sizeof(bufline),
+      "HTTP/1.1 200 OK\r\n"
+      "Content-Length: %" PRId64 "\r\n"
+      "Content-Type: %s\r\n"
+      "Connection: %s\r\n"
+      "\r\n",
+      response_size,
+      ctype,
+      (request->keep_alive ? "keep-alive" : "close"));
+  if (nbuf < 0 || (size_t) nbuf >= sizeof(bufline)) {
+    fprintf(stderr, "Header too long: %s\n", request->file_path);
+    response_error(request->handle, 500, "Internal Server Error", NULL);
+    destroy_response(response, 1);
+    return;
+  }
+
+  uv_buf_t buf = uv_buf_init(bufline, nbuf);
+  int written = 0;
+
+#ifndef _WIN32
+  /* A header this small almost always leaves in one synchronous write, which
+   * saves an allocation and a trip round the loop per response.  uv_try_write
+   * is safe with a stack buffer precisely because it does not queue. */
+  r = uv_try_write((uv_stream_t*) request->handle, &buf, 1);
+  if (r == nbuf) {
+    start_body(response);
+    return;
+  }
+  if (r > 0)
+    written = r;
+  else if (r < 0 && r != UV_EAGAIN) {
+    fprintf(stderr, "Write error: %s: %s\n", uv_err_name(r), uv_strerror(r));
+    destroy_response(response, 1);
+    return;
+  }
+#endif
+
+  /* Whatever is left has to be queued, so it needs a buffer that outlives this
+   * frame, and its own request, because response->write_req is still in use for
+   * the body chunks. */
+  response->header = malloc(nbuf - written);
+  if (response->header == NULL) {
+    fprintf(stderr, "Allocate error: %s\n", strerror(errno));
+    response_error(request->handle, 500, "Internal Server Error", NULL);
+    destroy_response(response, 1);
+    return;
+  }
+  memcpy(response->header, bufline + written, nbuf - written);
+  response->header_req.data = response;
+
+  buf = uv_buf_init(response->header, nbuf - written);
+  r = uv_write(&response->header_req, (uv_stream_t*) request->handle, &buf, 1, on_write_header);
+  if (r) {
+    fprintf(stderr, "Write error: %s: %s\n", uv_err_name(r), uv_strerror(r));
+    destroy_response(response, 1);
+  }
+}
+
+/* The body is only read once the header has actually gone out, so a partial or
+ * failed header write cannot be followed by body bytes. */
+static void
+start_body(http_response* response) {
+  /* A HEAD response is the header and nothing else. */
+  if (response->request->head_only) {
+    destroy_response(response, !response->request->keep_alive);
+    return;
+  }
+
+  int r = uv_fs_read(loop, &response->read_req, response->fd, &response->buf, 1, -1, on_fs_read);
+  if (r) {
+    fprintf(stderr, "File read error: %s: %s\n", uv_err_name(r), uv_strerror(r));
+    destroy_response(response, 1);
+  }
+}
+
+static void
+on_write_header(uv_write_t* req, int status) {
+  http_response* response = (http_response*) req->data;
+
+  free(response->header);
+  response->header = NULL;
+
+  if (status != 0) {
+    fprintf(stderr, "Write error: %s: %s\n", uv_err_name(status), uv_strerror(status));
+    destroy_response(response, 1);
+    return;
+  }
+
+  start_body(response);
 }
 
 /*
@@ -605,13 +874,34 @@ request_complete(http_request* request) {
   else
     request->keep_alive = find_header_value(request, "Connection", "keep-alive");
 
-  file_cache_entry* entry = get_or_load_file_cache_entry(request->file_path);
-  if (entry == NULL) {
+  int too_large = 0;
+  file_cache_entry* entry = get_or_load_file_cache_entry(request->file_path, &too_large);
+  if (entry != NULL) {
+    respond_with_cache_entry(request, entry);
+    return;
+  }
+  if (!too_large) {
     response_error(request->handle, 404, "Not Found", NULL);
     destroy_request(request, 1);
     return;
   }
-  respond_with_cache_entry(request, entry);
+
+  /* Too big to cache: stream it from disk asynchronously instead. */
+  uv_fs_t* open_req = malloc(sizeof(uv_fs_t));
+  if (open_req == NULL) {
+    fprintf(stderr, "Allocate error: %s\n", strerror(errno));
+    response_error(request->handle, 500, "Internal Server Error", NULL);
+    destroy_request(request, 1);
+    return;
+  }
+  open_req->data = request;
+  int r = uv_fs_open(loop, open_req, request->file_path, O_RDONLY, S_IREAD, on_fs_open);
+  if (r) {
+    fprintf(stderr, "Open error: %s: %s: %s\n", request->file_path, uv_err_name(r), uv_strerror(r));
+    response_error(request->handle, 404, "Not Found", NULL);
+    destroy_request(request, 1);
+    free(open_req);
+  }
 }
 
 static void
@@ -696,12 +986,7 @@ on_read(uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf) {
     return;
   }
 
-  http_request* request = calloc(1, sizeof(http_request));
-  if (request == NULL) {
-    fprintf(stderr, "Allocate error: %s\n", strerror(errno));
-    close_connection((uv_handle_t*) stream);
-    return;
-  }
+  http_request* request = &conn->request_storage;
   request->handle = (uv_handle_t*) stream;
   request->method = method;
   request->method_len = method_len;
@@ -777,6 +1062,28 @@ response_error(uv_handle_t* handle, int status_code, const char* status, const c
 }
 
 static void
+on_fs_read(uv_fs_t *req) {
+  http_response* response = (http_response*) req->data;
+  ssize_t result = req->result;
+
+  uv_fs_req_cleanup(req);
+  if (result < 0) {
+    fprintf(stderr, "File read error: %s: %s\n", uv_err_name(result), uv_strerror(result));
+    response_error(response->handle, 500, "Internal Server Error", NULL);
+    destroy_response(response, 1);
+    return;
+  }
+
+  uv_buf_t buf = uv_buf_init(response->pbuf, result);
+  int r = uv_write(&response->write_req, (uv_stream_t*) response->handle, &buf, 1, on_write);
+  if (r) {
+    destroy_response(response, 1);
+    return;
+  }
+  response->response_offset += result;
+}
+
+static void
 on_connection(uv_stream_t* server, int status) {
   uv_stream_t* stream;
   int r;
@@ -817,11 +1124,7 @@ on_connection(uv_stream_t* server, int status) {
     return;
   }
 
-  /* Neither flag is worth dropping a connection over. */
-  r = uv_tcp_simultaneous_accepts((uv_tcp_t*) stream, 1);
-  if (r)
-    fprintf(stderr, "Flag error: %s: %s\n", uv_err_name(r), uv_strerror(r));
-
+  /* Not worth dropping a connection over. */
   r = uv_tcp_nodelay((uv_tcp_t*) stream, 1);
   if (r)
     fprintf(stderr, "Flag error: %s: %s\n", uv_err_name(r), uv_strerror(r));
