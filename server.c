@@ -57,6 +57,17 @@
 
 #define WRITE_BUF_SIZE (8192/4)
 
+/* Appended when the request target names a directory. */
+#define INDEX_FILE "index.html"
+
+/* Windows accepts both characters as path separators, so a request target
+ * carrying backslashes has to be split on them there as well. */
+#ifdef _WIN32
+# define IS_PATH_SEP(c) ((c) == '/' || (c) == '\\')
+#else
+# define IS_PATH_SEP(c) ((c) == '/')
+#endif
+
 #ifndef S_IREAD
 #define S_IREAD _S_IREAD
 #endif
@@ -280,14 +291,91 @@ find_header_value(http_request* request, const char* name, const char* value) {
   return 0;
 }
 
+/* Resolves the request target into request->file_path as a path below
+ * static_dir.  "." and ".." are resolved lexically, and a target that would
+ * escape the document root or that does not fit in file_path is rejected
+ * instead of truncated.  Returns 0 on success, otherwise the HTTP status code
+ * to reject the request with. */
+static int
+build_file_path(http_request* request) {
+  const char* p = request->path;
+  const char* end = p + request->path_len;
+  char* out;
+  char* root_end;
+  char* limit;
+
+  if (p == end || !IS_PATH_SEP(*p))
+    return 400;
+
+  /* Reserve room for the longest suffix appended below: a separator, plus
+   * INDEX_FILE and its terminating NUL. */
+  limit = request->file_path + sizeof(request->file_path) - sizeof(INDEX_FILE) - 1;
+  if (request->file_path + static_dir_len > limit)
+    return 500;
+
+  memcpy(request->file_path, static_dir, static_dir_len);
+  out = root_end = request->file_path + static_dir_len;
+
+  while (p < end) {
+    const char* seg;
+    size_t seg_len;
+
+    while (p < end && IS_PATH_SEP(*p)) p++;
+    seg = p;
+    while (p < end && !IS_PATH_SEP(*p)) p++;
+    seg_len = p - seg;
+
+    if (seg_len == 0)
+      break;
+    if (seg_len == 1 && seg[0] == '.')
+      continue;
+    if (seg_len == 2 && seg[0] == '.' && seg[1] == '.') {
+      if (out == root_end)
+        return 404;
+      /* Drop the segment appended last, along with its leading separator. */
+      while (out > root_end && *--out != '/')
+        ;
+      continue;
+    }
+    if (out + 1 + seg_len > limit)
+      return 414;
+    *out++ = '/';
+    memcpy(out, seg, seg_len);
+    out += seg_len;
+  }
+
+  if (out == root_end || IS_PATH_SEP(end[-1])) {
+    *out++ = '/';
+    memcpy(out, INDEX_FILE, sizeof(INDEX_FILE));
+  } else
+    *out = 0;
+
+  return 0;
+}
+
+static void
+respond_status(http_request* request, int status_code) {
+  const char* status;
+  switch (status_code) {
+  case 400: status = "Bad Request"; break;
+  case 414: status = "URI Too Long"; break;
+  case 500: status = "Internal Server Error"; break;
+  default:
+    status_code = 404;
+    status = "Not Found";
+    break;
+  }
+  response_error(request->handle, status_code, status, NULL);
+  destroy_request(request, 1);
+}
+
 static void
 request_complete(http_request* request) {
-  memcpy(request->file_path, static_dir, static_dir_len);
-  memcpy(request->file_path + static_dir_len, request->path, request->path_len);
-  if (*(request->path + request->path_len - 1) == '/') {
-    memcpy(request->file_path + static_dir_len + request->path_len, "index.html", 11);
-  } else
-    request->file_path[static_dir_len + request->path_len] = 0;
+  int status = build_file_path(request);
+  if (status) {
+    respond_status(request, status);
+    return;
+  }
   request->keep_alive = find_header_value(request, "Connection", "keep-alive");
 
   uv_fs_t* open_req = malloc(sizeof(uv_fs_t));
@@ -530,6 +618,10 @@ main(int argc, char* argv[]) {
       usage(argv[0]);
   }
   static_dir_len = strlen(static_dir);
+  if (static_dir_len > (int) (PATH_MAX - sizeof(INDEX_FILE) - 1)) {
+    fprintf(stderr, "Root directory too long: %s\n", static_dir);
+    return 1;
+  }
 
   struct sockaddr_in addr;
   int r;
