@@ -69,7 +69,7 @@ jobs:
       # BASELINE as findings are fixed.
       - name: Static analysis
         env:
-          BASELINE: 9
+          BASELINE: 6
         run: |
           clang --analyze -Xanalyzer -analyzer-output=text \
             -Wall -Wextra -Wno-unused-parameter -Wno-unused-function \
