@@ -55,6 +55,13 @@ def request(port, target, connection=b"close", read_all=True):
         s.close()
 
 
+def content_type(port, target):
+    for line in request(port, target).split(b"\r\n"):
+        if line.lower().startswith(b"content-type:"):
+            return line.split(b":", 1)[1].strip().decode("latin-1")
+    return "<none>"
+
+
 def status(port, target):
     data = request(port, target)
     if not data:
@@ -98,6 +105,10 @@ def main():
         f.write("SUB-INDEX\n")
     with open(os.path.join(root, "sub", "f.txt"), "w") as f:
         f.write("SUBFILE\n")
+    with open(os.path.join(root, "a.png"), "w") as f:
+        f.write("PNG\n")
+    with open(os.path.join(root, "unknown.bin"), "w") as f:
+        f.write("BIN\n")
     # Outside the document root: must never be served.
     with open(os.path.join(tmp, "secret.txt"), "w") as f:
         f.write(CANARY + "\n")
@@ -124,6 +135,15 @@ def main():
         check("GET /sub/../index.html", body(port, b"/sub/../index.html"), b"ROOT-INDEX\n")
         check("missing file is 404",
               status(port, b"/nope").startswith("HTTP/1.0 404"), True)
+
+        print("content types")
+        check("known extension", content_type(port, b"/a.png"), "image/png")
+        # An unknown extension must not inherit the type of an earlier response.
+        check("unknown extension after a known one",
+              content_type(port, b"/unknown.bin"), "application/octet-stream")
+        check("known extension again", content_type(port, b"/index.html"), "text/html")
+        check("unknown extension again",
+              content_type(port, b"/unknown.bin"), "application/octet-stream")
 
         print("rejecting bad targets")
         # An over-long target must be refused, not copied into a fixed buffer.
