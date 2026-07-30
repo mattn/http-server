@@ -109,6 +109,7 @@ btime(int f) {
 #endif
 
 static void on_write(uv_write_t*, int);
+static void on_write_header(uv_write_t*, int);
 static void on_write_error_free_buf(uv_write_t*, int);
 static void on_read(uv_stream_t*, ssize_t, const uv_buf_t*);
 static void on_close(uv_handle_t*);
@@ -145,6 +146,7 @@ close_file(uv_file fd) {
 
 static void
 destroy_response(http_response* response, int close_handle) {
+  if (response->header) free(response->header);
   if (response->pbuf) free(response->pbuf);
   if (response->request) destroy_request(response->request, close_handle);
   if (response->fd != -1)
@@ -260,27 +262,52 @@ on_fs_open(uv_fs_t* req) {
       response_size,
       ctype,
       (request->keep_alive ? "keep-alive" : "close"));
-  uv_buf_t buf = uv_buf_init(bufline, nbuf);
-
-#ifndef _WIN32
-  r = uv_try_write((uv_stream_t*) request->handle, &buf, 1);
-  if (r == 0) {
-    fprintf(stderr, "Write error\n");
+  if (nbuf < 0 || (size_t) nbuf >= sizeof(bufline)) {
+    fprintf(stderr, "Header too long: %s\n", request->file_path);
+    response_error(request->handle, 500, "Internal Server Error", NULL);
     destroy_response(response, 1);
     return;
   }
-#else
-  r = uv_write(&response->write_req, (uv_stream_t*) request->handle, &buf, 1, NULL);
+
+  /* uv_write() keeps the buffer, so the header cannot live on this frame; it
+   * also has its own request, because response->write_req is still in use for
+   * the body chunks. */
+  response->header = malloc(nbuf);
+  if (response->header == NULL) {
+    fprintf(stderr, "Allocate error: %s\n", strerror(errno));
+    response_error(request->handle, 500, "Internal Server Error", NULL);
+    destroy_response(response, 1);
+    return;
+  }
+  memcpy(response->header, bufline, nbuf);
+  response->header_req.data = response;
+
+  uv_buf_t buf = uv_buf_init(response->header, nbuf);
+  r = uv_write(&response->header_req, (uv_stream_t*) request->handle, &buf, 1, on_write_header);
   if (r) {
     fprintf(stderr, "Write error: %s: %s\n", uv_err_name(r), uv_strerror(r));
     destroy_response(response, 1);
+  }
+}
+
+/* The body is only read once the header has actually gone out, so a partial or
+ * failed header write cannot be followed by body bytes. */
+static void
+on_write_header(uv_write_t* req, int status) {
+  http_response* response = (http_response*) req->data;
+
+  free(response->header);
+  response->header = NULL;
+
+  if (status != 0) {
+    fprintf(stderr, "Write error: %s: %s\n", uv_err_name(status), uv_strerror(status));
+    destroy_response(response, 1);
     return;
   }
-#endif
 
-  r = uv_fs_read(loop, &response->read_req, result, &response->buf, 1, -1, on_fs_read);
+  int r = uv_fs_read(loop, &response->read_req, response->fd, &response->buf, 1, -1, on_fs_read);
   if (r) {
-    response_error(request->handle, 500, "Internal Server Error", NULL);
+    fprintf(stderr, "File read error: %s: %s\n", uv_err_name(r), uv_strerror(r));
     destroy_response(response, 1);
   }
 }

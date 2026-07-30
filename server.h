@@ -47,7 +47,9 @@ typedef struct _http_request {
 typedef struct {
   uv_file fd;
   uv_write_t write_req;
+  uv_write_t header_req;
   uv_fs_t read_req;
+  char* header;
   char* pbuf;
   uv_buf_t buf;
   uv_handle_t* handle;
