@@ -29,6 +29,23 @@ jobs:
       - name: Smoke test
         run: python3 test/smoke.py ./http-server
 
+  # Builds through the project's own CMakeLists rather than a bare cc line, so
+  # the path a macOS user actually takes (issue #1) stays covered.
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build
+        run: |
+          cmake -S . -B build
+          cmake --build build -j"$(sysctl -n hw.ncpu)"
+
+      - name: Smoke test
+        run: python3 test/smoke.py ./build/http-server
+
   asan:
     runs-on: ubuntu-latest
     steps:
