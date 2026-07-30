@@ -113,12 +113,21 @@ static void on_alloc(uv_handle_t*, size_t, uv_buf_t*);
 static void on_fs_read(uv_fs_t*);
 static void response_error(uv_handle_t*, int, const char*, const char*);
 
+/* Closing a handle twice aborts inside libuv, and with asserts off links it
+ * into the closing queue twice so on_close() frees it twice, so every close
+ * goes through here. */
+static void
+close_connection(uv_handle_t* handle) {
+  if (handle && !uv_is_closing(handle))
+    uv_close(handle, on_close);
+}
+
 static void
 destroy_request(http_request* request, int close_handle) {
   if (request->handle) {
     request->handle->data = NULL;
     if (close_handle)
-      uv_close(request->handle, on_close);
+      close_connection(request->handle);
   }
   free(request);
 }
@@ -440,8 +449,8 @@ on_read(uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf) {
     /* A connection with no request in flight has no other owner, so nothing
      * else would ever close it.  One that does is closed by the request or
      * response that owns it, once its write fails. */
-    if (stream->data == NULL && !uv_is_closing((uv_handle_t*) stream))
-      uv_close((uv_handle_t*) stream, on_close);
+    if (stream->data == NULL)
+      close_connection((uv_handle_t*) stream);
     return;
   }
 
@@ -450,14 +459,23 @@ on_read(uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf) {
     return;
   }
 
+  /* One request per connection at a time.  Anything arriving while one is in
+   * flight -- a pipelined request, or garbage -- is ignored: serving it would
+   * give the connection a second owner, and whichever finished first would
+   * close the handle out from under the other.  A second request in a single
+   * read is already dropped, since the target is parsed only once. */
+  if (stream->data != NULL) {
+    free(buf->base);
+    return;
+  }
+
   http_request* request = calloc(1, sizeof(http_request));
   if (request == NULL) {
     free(buf->base);
     fprintf(stderr, "Allocate error: %s\n", strerror(errno));
-    uv_close((uv_handle_t*) stream, on_close);
+    close_connection((uv_handle_t*) stream);
     return;
   }
-  stream->data = request;
 
   request->handle = (uv_handle_t*) stream;
 
@@ -477,9 +495,11 @@ on_read(uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf) {
     free(request);
     free(buf->base);
     fprintf(stderr, "Invalid request\n");
-    uv_close((uv_handle_t*) stream, on_close);
+    close_connection((uv_handle_t*) stream);
     return;
   }
+  /* From here on this request owns the connection. */
+  stream->data = request;
   /*
   int cl = content_length(request);
   if (cl >= 0 && cl < buf->len - nparsed) {
@@ -608,7 +628,7 @@ on_connection(uv_stream_t* server, int status) {
   r = uv_read_start(stream, on_alloc, on_read);
   if (r) {
     fprintf(stderr, "Read error: %s: %s\n", uv_err_name(r), uv_strerror(r));
-    uv_close((uv_handle_t*) stream, on_close);
+    close_connection((uv_handle_t*) stream);
   }
 }
 
