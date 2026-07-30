@@ -72,6 +72,10 @@
 #define S_IREAD _S_IREAD
 #endif
 
+#ifndef S_ISREG
+#define S_ISREG(m) (((m) & S_IFMT) == S_IFREG)
+#endif
+
 #ifdef _WIN32
 # define INVALID_FD (INVALID_HANDLE_VALUE)
 #else
@@ -133,13 +137,18 @@ destroy_request(http_request* request, int close_handle) {
 }
 
 static void
+close_file(uv_file fd) {
+  uv_fs_t close_req;
+  uv_fs_close(loop, &close_req, fd, NULL);
+  uv_fs_req_cleanup(&close_req);
+}
+
+static void
 destroy_response(http_response* response, int close_handle) {
   if (response->pbuf) free(response->pbuf);
   if (response->request) destroy_request(response->request, close_handle);
-  if (response->fd != -1) {
-    uv_fs_t close_req;
-    uv_fs_close(loop, &close_req, (uv_file) response->fd, NULL);
-  }
+  if (response->fd != -1)
+    close_file((uv_file) response->fd);
   free(response);
 }
 
@@ -185,13 +194,25 @@ on_fs_open(uv_fs_t* req) {
   int r = uv_fs_fstat(loop, &stat_req, result, NULL);
   if (r < 0) {
     fprintf(stderr, "Stat error: %s: %s: %s\n", request->file_path, uv_err_name(r), uv_strerror(r));
+    uv_fs_req_cleanup(&stat_req);
+    close_file((uv_file) result);
     response_error(request->handle, 404, "Not Found", NULL);
     destroy_request(request, 1);
     return;
   }
 
   uint64_t response_size = stat_req.statbuf.st_size;
+  int regular = S_ISREG(stat_req.statbuf.st_mode);
   uv_fs_req_cleanup(&stat_req);
+
+  /* Opening a directory succeeds on Linux, but reading it fails afterwards,
+   * by which point a 200 and a Content-Length have already gone out. */
+  if (!regular) {
+    close_file((uv_file) result);
+    response_error(request->handle, 404, "Not Found", NULL);
+    destroy_request(request, 1);
+    return;
+  }
 
   const char* ctype = "application/octet-stream";
   const char* dot = request->file_path;
@@ -208,6 +229,7 @@ on_fs_open(uv_fs_t* req) {
   http_response* response = calloc(1, sizeof(http_response));
   if (response == NULL) {
     fprintf(stderr, "Allocate error: %s\n", strerror(r));
+    close_file((uv_file) result);
     response_error(request->handle, 404, "Not Found", NULL);
     destroy_request(request, 1);
     return;

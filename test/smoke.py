@@ -172,6 +172,16 @@ def main():
         check("unknown extension again",
               content_type(port, b"/unknown.bin"), "application/octet-stream")
 
+        print("rejecting anything that is not a regular file")
+        # Opening a directory succeeds on Linux; reading it fails only after a
+        # 200 and a Content-Length have already been written.
+        for target in (b"/sub", b"/.", b"/sub/.."):
+            data = request(port, target)
+            check(f"{target.decode()} gives one status line",
+                  data.count(b"HTTP/1."), 1)
+        check("directory without a slash is 404",
+              status(port, b"/sub").startswith("HTTP/1.0 404"), True)
+
         print("rejecting bad targets")
         # An over-long target must be refused, not copied into a fixed buffer.
         check("over-long target is 414",
