@@ -163,6 +163,41 @@ def main():
                             (b"/%2Fetc/passwd", "encoded separator, upper case")):
             check(f"{why} is 400", status(port, target).startswith("HTTP/1.0 400"), True)
 
+        print("Connection header matching")
+
+        def conn(extra):
+            s = socket.socket()
+            s.settimeout(2)
+            try:
+                s.connect(("127.0.0.1", port))
+                s.sendall(b"GET /index.html HTTP/1.1\r\nHost: x\r\n" + extra + b"\r\n")
+                # Read only the header block: a keep-alive response leaves the
+                # connection open, so reading to EOF would just time out.
+                data = b""
+                while b"\r\n\r\n" not in data:
+                    chunk = s.recv(65536)
+                    if not chunk:
+                        break
+                    data += chunk
+            except OSError:
+                return "<error>"
+            finally:
+                s.close()
+            for line in data.split(b"\r\n"):
+                if line.lower().startswith(b"connection:"):
+                    return line.split(b":", 1)[1].strip().decode("latin-1").lower()
+            return "<none>"
+
+        check("Connection: keep-alive", conn(b"Connection: keep-alive\r\n"), "keep-alive")
+        check("Connection: close", conn(b"Connection: close\r\n"), "close")
+        check("mixed case", conn(b"Connection: Keep-Alive\r\n"), "keep-alive")
+        # A received name must match in full, not as a prefix of the one sought.
+        check("one letter header is not Connection", conn(b"C: k\r\n"), "close")
+        check("Conn is not Connection", conn(b"Conn: keep\r\n"), "close")
+        # Connection is a token list, so keep-alive counts among other tokens.
+        check("token among others", conn(b"Connection: keep-alive, TE\r\n"), "keep-alive")
+        check("token with padding", conn(b"Connection:  TE ,  keep-alive \r\n"), "keep-alive")
+
         print("methods")
         s = socket.socket()
         s.settimeout(2)
