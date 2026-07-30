@@ -47,6 +47,11 @@ typedef struct _http_request {
   char file_path[PATH_MAX];
 } http_request;
 
+/* Scratch space handed to libuv for each read.  One read is in flight per
+ * connection at a time, so a fixed buffer can be reused instead of having
+ * on_alloc allocate and on_read free one per read. */
+#define READ_BUF_SIZE 16384
+
 /* Per connection state, hung off the handle's data pointer.  A request can
  * arrive across several reads, so the bytes seen so far are accumulated here;
  * `request` is the one currently being served, or NULL when the connection is
@@ -57,20 +62,12 @@ typedef struct {
   size_t cap;
   size_t last_len;
   struct _http_request* request;
+  char read_buf[READ_BUF_SIZE];
 } http_connection;
 
 typedef struct {
-  uv_file fd;
   uv_write_t write_req;
-  uv_write_t header_req;
-  uv_fs_t read_req;
-  char* header;
-  char* pbuf;
-  uv_buf_t buf;
   uv_handle_t* handle;
-
-  uint64_t response_size;
-  uint64_t response_offset;
 
   http_request* request;
 } http_response;
